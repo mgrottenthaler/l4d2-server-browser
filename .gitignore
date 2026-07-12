@@ -2,3 +2,4 @@
 .venv/
 __pycache__/
 *.pyc
+.steam_refresh_token.json
