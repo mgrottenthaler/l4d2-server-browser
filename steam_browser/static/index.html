@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Left 4 Dead 2 - Server Browser</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="window">
+
+  <header class="titlebar">
+    <h1 class="app-title">Game Servers</h1>
+  </header>
+
+  <div class="tabsbar">
+    <div class="tabs">
+      <button type="button" class="tab active" id="tab-internet" data-tab="internet">Internet</button>
+      <button type="button" class="tab" id="tab-favorites" data-tab="favorites">Favorites</button>
+    </div>
+    <div class="tabsbar-spacer"></div>
+    <div class="game-select" title="This browser only queries Left 4 Dead 2">Left 4 Dead 2</div>
+    <button id="refresh-btn" class="icon-btn refresh-btn" title="Refresh server list">
+      <span class="refresh-icon">&#8635;</span>
+    </button>
+  </div>
+
+  <div class="content">
+    <div class="table-wrap">
+      <table id="server-table">
+        <thead>
+          <tr>
+            <th class="col-fav" title="Favorite">&#9733;</th>
+            <th class="col-lock" title="Password protected">&#128274;</th>
+            <th class="col-secure" title="VAC secured">&#10003;</th>
+            <th data-key="name" class="col-name">Server Name</th>
+            <th data-key="mode" class="col-mode">Mode</th>
+            <th data-key="campaign" class="col-campaign">Campaign</th>
+            <th data-key="stage" class="col-stage">Map</th>
+            <th class="col-ip">IP Address</th>
+            <th data-key="player_ratio" class="col-players">Players</th>
+            <th data-key="latency_ms" class="col-ping">Latency</th>
+          </tr>
+        </thead>
+        <tbody id="server-rows">
+        </tbody>
+      </table>
+      <div id="empty-state" class="empty-state" hidden>No servers match the current filters.</div>
+    </div>
+
+    <aside id="server-sidebar" class="sidebar" hidden>
+      <div class="sidebar-header">
+        <h2 id="sidebar-title">Server Details</h2>
+        <button type="button" id="sidebar-close" class="icon-btn sidebar-close" title="Close">&times;</button>
+      </div>
+      <dl class="sidebar-fields">
+        <dt>Status</dt><dd id="sd-status"></dd>
+        <dt>Mode</dt><dd id="sd-mode"></dd>
+        <dt>Campaign</dt><dd id="sd-campaign"></dd>
+        <dt>Map</dt><dd id="sd-map"></dd>
+        <dt>Players</dt><dd id="sd-players"></dd>
+        <dt>Bots</dt><dd id="sd-bots"></dd>
+        <dt>Latency</dt><dd id="sd-latency"></dd>
+        <dt>Location</dt><dd id="sd-location"></dd>
+        <dt>IP Address</dt><dd id="sd-ip"></dd>
+      </dl>
+
+      <div class="sidebar-section" id="sidebar-players">
+        <div class="sidebar-section-header">
+          <button type="button" id="sidebar-players-toggle" class="sidebar-section-toggle">
+            <span class="caret" id="sidebar-players-caret">&#9662;</span>
+            Players <span id="sidebar-players-count" class="sidebar-section-count"></span>
+          </button>
+          <button type="button" id="sidebar-players-refresh" class="sidebar-section-refresh" title="Refresh player list">&#8635;</button>
+        </div>
+        <div id="sidebar-players-body" class="sidebar-section-body">
+          <table id="sidebar-players-table" class="players-table" hidden>
+            <thead>
+              <tr><th>Name</th><th class="col-score">Score</th><th class="col-time">Time</th></tr>
+            </thead>
+            <tbody id="sidebar-players-rows"></tbody>
+          </table>
+          <div id="sidebar-players-status" class="sidebar-section-status"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section collapsed" id="sidebar-rules">
+        <div class="sidebar-section-header">
+          <button type="button" id="sidebar-rules-toggle" class="sidebar-section-toggle">
+            <span class="caret" id="sidebar-rules-caret">&#9662;</span>
+            Rules <span id="sidebar-rules-count" class="sidebar-section-count"></span>
+          </button>
+          <button type="button" id="sidebar-rules-refresh" class="sidebar-section-refresh" title="Refresh rules">&#8635;</button>
+        </div>
+        <div id="sidebar-rules-body" class="sidebar-section-body">
+          <table id="sidebar-rules-table" class="kv-table" hidden>
+            <thead>
+              <tr><th>Rule</th><th>Value</th></tr>
+            </thead>
+            <tbody id="sidebar-rules-rows"></tbody>
+          </table>
+          <div id="sidebar-rules-status" class="sidebar-section-status"></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section collapsed" id="sidebar-technical">
+        <div class="sidebar-section-header">
+          <button type="button" id="sidebar-technical-toggle" class="sidebar-section-toggle">
+            <span class="caret" id="sidebar-technical-caret">&#9662;</span>
+            Technical Details
+          </button>
+        </div>
+        <div id="sidebar-technical-body" class="sidebar-section-body">
+          <dl class="sidebar-fields">
+            <dt>Protocol</dt><dd id="sd-protocol"></dd>
+            <dt>Folder</dt><dd id="sd-folder"></dd>
+            <dt>Game</dt><dd id="sd-game"></dd>
+          </dl>
+        </div>
+      </div>
+
+      <div class="sidebar-footer">
+        <a id="sidebar-connect-link" class="btn btn-primary sidebar-connect-btn" href="#">Join Server</a>
+        <div class="sidebar-uri-row">
+          <code id="sidebar-uri"></code>
+          <button type="button" id="sidebar-copy" class="link-btn">Copy</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <div class="statusbar">
+    <span id="status-text">Click refresh to load the server list.</span>
+    <span id="status-updated"></span>
+  </div>
+
+  <div class="filter-panel" id="filter-panel">
+    <div class="filter-row">
+      <div class="field">
+        <label for="f-name">Server Name</label>
+        <input id="f-name" type="text" placeholder="Filter by name&hellip;" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="f-map">Map</label>
+        <input id="f-map" type="text" placeholder="Filter by map&hellip;" autocomplete="off">
+      </div>
+
+      <div class="field">
+        <label for="f-mode">Mode</label>
+        <select id="f-mode">
+          <option value="">&lt;All&gt;</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="f-ping">Latency</label>
+        <select id="f-ping">
+          <option value="">&lt;All&gt;</option>
+          <option value="50">&lt; 50</option>
+          <option value="100">&lt; 100</option>
+          <option value="150">&lt; 150</option>
+          <option value="250">&lt; 250</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="f-secure">Anti-cheat</label>
+        <select id="f-secure">
+          <option value="">&lt;All&gt;</option>
+          <option value="secure">Secure</option>
+          <option value="insecure">Insecure</option>
+        </select>
+      </div>
+
+      <div class="field checkboxes">
+        <label><input type="checkbox" id="f-not-full"> Server not full</label>
+        <label><input type="checkbox" id="f-not-empty"> Has users playing</label>
+        <label><input type="checkbox" id="f-no-password"> Is not password protected</label>
+        <label>
+          <input type="checkbox" id="f-official"> Official servers only
+          <span class="info-icon" tabindex="0"
+                data-tooltip="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers."
+                aria-label="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers.">i</span>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <footer class="actionbar">
+    <div class="actionbar-left">
+      <button type="button" id="toggle-filters-btn" class="link-btn">
+        <span id="toggle-filters-caret" class="caret">&#9662;</span> Change Filters
+      </button>
+      <span id="filter-summary" class="filter-summary"></span>
+    </div>
+  </footer>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
