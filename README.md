@@ -19,26 +19,6 @@ Create a `.env` file in the project root with your Steam Web API key
 STEAM-API-KEY=your_key_here
 ```
 
-A future `scripts/query_difficulty.py` will additionally need a logged-in
-Steam session (server difficulty isn't exposed over plain A2S queries).
-Add your Steam account to `.env`:
-
-```
-STEAM_USERNAME=your_steam_username
-STEAM_PASSWORD=your_steam_password
-```
-
-then run the standalone login script once (handles Steam Guard/2FA/email
-codes on the terminal, then caches a refresh token to
-`.steam_refresh_token.json` so later runs don't need your password or a
-code again):
-
-```bash
-python3 scripts/steam_login.py
-```
-
-If the cached session ever gets invalidated, just re-run that script.
-
 ## Usage
 
 ```bash
