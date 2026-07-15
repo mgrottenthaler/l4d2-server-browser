@@ -9,6 +9,7 @@
     name: "",
     map: "",
     mode: "",
+    campaign: "",
     ping: "",
     secure: "",
     notEmpty: false,
@@ -78,6 +79,7 @@
       name: els.name.value,
       map: els.map.value,
       mode: els.mode.value,
+      campaign: els.campaign.value,
       ping: els.ping.value,
       secure: els.secure.value,
       notEmpty: els.notEmpty.checked,
@@ -124,6 +126,7 @@
     name: document.getElementById("f-name"),
     map: document.getElementById("f-map"),
     mode: document.getElementById("f-mode"),
+    campaign: document.getElementById("f-campaign"),
     ping: document.getElementById("f-ping"),
     secure: document.getElementById("f-secure"),
     notEmpty: document.getElementById("f-not-empty"),
@@ -181,6 +184,8 @@
   els.name.value = saved.name;
   els.map.value = saved.map;
   els.ping.value = saved.ping;
+  // els.campaign is repopulated from live data once servers load, same as
+  // els.mode; the saved value is re-applied inside populateCampaignOptions().
   els.secure.value = saved.secure;
   els.notEmpty.checked = saved.notEmpty;
   els.notFull.checked = saved.notFull;
@@ -251,10 +256,26 @@
     if (modes.indexOf(current) !== -1) els.mode.value = current;
   }
 
+  function populateCampaignOptions() {
+    var campaigns = Array.from(new Set(state.servers.map(function (s) { return s.campaign; })))
+      .filter(function (c) { return c && c !== "-"; })
+      .sort();
+    var current = els.campaign.value || saved.campaign;
+    els.campaign.innerHTML = '<option value="">&lt;All&gt;</option>';
+    campaigns.forEach(function (c) {
+      var opt = document.createElement("option");
+      opt.value = c;
+      opt.textContent = c;
+      els.campaign.appendChild(opt);
+    });
+    if (campaigns.indexOf(current) !== -1) els.campaign.value = current;
+  }
+
   function getFiltered() {
     var nameQuery = els.name.value.trim().toLowerCase();
     var mapQuery = els.map.value.trim().toLowerCase();
     var mode = els.mode.value;
+    var campaign = els.campaign.value;
     var maxPing = els.ping.value ? parseFloat(els.ping.value) : null;
     var secure = els.secure.value;
     var notEmpty = els.notEmpty.checked;
@@ -271,6 +292,7 @@
           s.stage.toLowerCase().indexOf(mapQuery) === -1 &&
           s.campaign.toLowerCase().indexOf(mapQuery) === -1) return false;
       if (mode && s.mode !== mode) return false;
+      if (campaign && s.campaign !== campaign) return false;
       if (maxPing !== null && s.latency_ms > maxPing) return false;
       if (secure === "secure" && !s.secure) return false;
       if (secure === "insecure" && s.secure) return false;
@@ -407,9 +429,14 @@
         if (!state.playerQuery || state.playerQuery.key !== key) return; // stale, selection moved on
         if (result.ok) {
           state.playerQuery = { key: key, loading: false, players: result.data.players, error: null };
-        } else {
-          state.playerQuery = { key: key, loading: false, players: null, error: result.data.error || "Query failed" };
+          // The live A2S_PLAYER query is more current than the last full-list
+          // probe, so reflect its count everywhere the player count is shown
+          // (table row, sidebar summary) instead of waiting for the next poll.
+          s.players = result.data.players.length;
+          render();
+          return;
         }
+        state.playerQuery = { key: key, loading: false, players: null, error: result.data.error || "Query failed" };
         renderPlayers();
       })
       .catch(function () {
@@ -491,6 +518,7 @@
     if (els.name.value.trim()) parts.push('name contains "' + els.name.value.trim() + '"');
     if (els.map.value.trim()) parts.push('map contains "' + els.map.value.trim() + '"');
     if (els.mode.value) parts.push("mode = " + els.mode.value);
+    if (els.campaign.value) parts.push("campaign = " + els.campaign.value);
     if (els.ping.value) parts.push("latency < " + els.ping.value);
     if (els.secure.value) parts.push(els.secure.value === "secure" ? "is secured" : "is not secured");
     if (els.notFull.checked) parts.push("is not full");
@@ -502,6 +530,7 @@
 
   function render() {
     populateModeOptions();
+    populateCampaignOptions();
     var rows = sortRows(getFiltered());
 
     els.rows.innerHTML = "";
@@ -797,7 +826,7 @@
   [els.name, els.map].forEach(function (el) {
     el.addEventListener("input", render);
   });
-  [els.mode, els.ping, els.secure, els.noPassword, els.official].forEach(function (el) {
+  [els.mode, els.campaign, els.ping, els.secure, els.noPassword, els.official].forEach(function (el) {
     el.addEventListener("change", render);
   });
   // These two are pushed to the Valve query itself (see triggerRefresh), so
