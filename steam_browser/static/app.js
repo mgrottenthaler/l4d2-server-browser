@@ -373,6 +373,26 @@
     renderRules();
   }
 
+  function patchPlayerCount(s) {
+    // A live A2S_PLAYER query only refreshes one row's count, not the whole
+    // list - running it through the normal render() would re-apply
+    // getFiltered() (e.g. "not full"/"has users playing") using that one
+    // fresher number and could yank the row the user just clicked right out
+    // of view. Patch the DOM in place instead so the count updates without
+    // re-filtering or re-sorting the rest of the table.
+    if (isSelected(s)) {
+      els.sdPlayers.textContent = s.players + " / " + s.max_players;
+    }
+    var row = els.rows.querySelector('tr[data-host="' + s.host + '"][data-port="' + s.port + '"]');
+    if (row) {
+      var cell = row.querySelector(".col-players");
+      if (cell) {
+        cell.textContent = s.players + "/" + s.max_players;
+        cell.className = "col-players " + playersClass(s.players, s.max_players);
+      }
+    }
+  }
+
   function renderPlayers() {
     var q = state.playerQuery;
     if (!q) {
@@ -433,10 +453,10 @@
           // probe, so reflect its count everywhere the player count is shown
           // (table row, sidebar summary) instead of waiting for the next poll.
           s.players = result.data.players.length;
-          render();
-          return;
+          patchPlayerCount(s);
+        } else {
+          state.playerQuery = { key: key, loading: false, players: null, error: result.data.error || "Query failed" };
         }
-        state.playerQuery = { key: key, loading: false, players: null, error: result.data.error || "Query failed" };
         renderPlayers();
       })
       .catch(function () {
@@ -536,6 +556,8 @@
     els.rows.innerHTML = "";
     rows.forEach(function (s) {
       var tr = document.createElement("tr");
+      tr.dataset.host = s.host;
+      tr.dataset.port = s.port;
       if (isSelected(s)) tr.classList.add("selected");
       var favorited = state.favorites.has(favoriteKey(s));
       var flag = countryFlag(s.country_code);
