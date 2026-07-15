@@ -13,8 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, jsonify, request, send_from_directory
 
 from steam_browser import a2s
-from steam_browser import config as config_mod
 from steam_browser import geoip
+from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key
 from steam_browser import steam_api
 from steam_browser.browser import probe_server
 
@@ -116,8 +116,7 @@ def api_server_players(host, port):
     # sidebar - querying A2S_PLAYER for every server on every poll would
     # multiply outbound UDP traffic by the whole server list for data
     # nobody's looking at.
-    cfg = config_mod.load_config(app.config["STEAM_BROWSER_CONFIG_PATH"])
-    timeout = cfg.get("query_timeout_s", 1.5)
+    timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
         players = a2s.query_players(host, port, timeout=timeout)
         return jsonify({"players": players})
@@ -129,8 +128,7 @@ def api_server_players(host, port):
 def api_server_rules(host, port):
     # Same on-demand, sidebar-only pattern as /players - rules can be a
     # sizeable cvar dump and most users never expand the section.
-    cfg = config_mod.load_config(app.config["STEAM_BROWSER_CONFIG_PATH"])
-    timeout = cfg.get("query_timeout_s", 1.5)
+    timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
         rules = a2s.query_rules(host, port, timeout=timeout)
         return jsonify({"rules": rules})
@@ -140,36 +138,27 @@ def api_server_rules(host, port):
 
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
-    cfg = config_mod.load_config(app.config["STEAM_BROWSER_CONFIG_PATH"])
     api_key = app.config["STEAM_BROWSER_API_KEY"]
     body = request.get_json(silent=True) or {}
     not_empty = bool(body.get("not_empty"))
     not_full = bool(body.get("not_full"))
-    threading.Thread(target=_refresh, args=(cfg, api_key, not_empty, not_full), daemon=True).start()
+    threading.Thread(target=_refresh, args=(DEFAULT_CONFIG, api_key, not_empty, not_full), daemon=True).start()
     with _state_lock:
         return jsonify({"status": _state["status"]})
 
 
-def create_app(config_path=None):
-    config_path = config_path or os.path.join(PROJECT_ROOT, "config.json")
-    api_key = config_mod.get_steam_api_key(PROJECT_ROOT)
-    app.config["STEAM_BROWSER_CONFIG_PATH"] = config_path
-    app.config["STEAM_BROWSER_API_KEY"] = api_key
+def create_app():
+    app.config["STEAM_BROWSER_API_KEY"] = get_steam_api_key(PROJECT_ROOT)
     return app
 
 
 def main():
     parser = argparse.ArgumentParser(description="Left 4 Dead 2 web server browser")
-    parser.add_argument(
-        "--config",
-        default=os.path.join(PROJECT_ROOT, "config.json"),
-        help="Path to JSON config file (default: config.json)",
-    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=5000, help="Port to bind (default: 5000)")
     args = parser.parse_args()
 
-    application = create_app(args.config)
+    application = create_app()
     application.run(host=args.host, port=args.port)
 
 

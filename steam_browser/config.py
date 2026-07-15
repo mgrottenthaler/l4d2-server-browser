@@ -1,22 +1,13 @@
-"""Config loading: .env (Steam API key) + JSON config (filters)."""
+"""Config: .env (Steam API key) + in-code defaults (query tuning)."""
 
-import json
 import os
 
 DEFAULT_CONFIG = {
     "appid": 550,
     "gamedir": "left4dead2",
-    "max_latency_ms": 100,
-    "target_matches": 20,
-    "initial_servers_to_query": 100,
     "max_servers_to_query": 10000,  # Valve's GetServerList hard-caps a single response here regardless of limit
     "query_timeout_s": 1.5,
     "max_workers": 50,
-    "name_filter": "",
-    "not_empty": False,
-    "not_full": False,
-    "no_password": False,
-    "dedicated_secure": False,
 }
 
 
@@ -32,15 +23,6 @@ def load_env(env_path):
             key, value = line.split("=", 1)
             env[key.strip()] = value.strip().strip('"').strip("'")
     return env
-
-
-def load_config(config_path):
-    config = dict(DEFAULT_CONFIG)
-    if os.path.isfile(config_path):
-        with open(config_path, "r") as f:
-            user_config = json.load(f)
-        config.update(user_config)
-    return config
 
 
 def get_steam_api_key(project_root):
