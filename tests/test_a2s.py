@@ -194,9 +194,10 @@ def test_parse_rules_response_name_value_pairs():
 # ---------------------------------------------------------------------------
 
 class FakeSocket:
-    """Stand-in for socket.socket: recvfrom() replays a fixed sequence of
+    """Stand-in for socket.socket: recv() replays a fixed sequence of
     packets instead of hitting the network, so protocol tests don't need a
-    real UDP endpoint.
+    real UDP endpoint. Connected-socket API (connect/send/recv), matching
+    how a2s.py uses the real thing.
     """
 
     def __init__(self, packets):
@@ -206,13 +207,16 @@ class FakeSocket:
     def settimeout(self, timeout):
         pass
 
-    def sendto(self, data, addr):
+    def connect(self, addr):
+        pass
+
+    def send(self, data):
         self.sent.append(data)
 
-    def recvfrom(self, bufsize):
+    def recv(self, bufsize):
         if not self._packets:
             raise socket.timeout()
-        return self._packets.pop(0), ("127.0.0.1", 27015)
+        return self._packets.pop(0)
 
     def close(self):
         pass
@@ -223,7 +227,7 @@ def test_recv_response_single_packet():
     packet = struct.pack("<i", -1) + payload
     sock = FakeSocket([packet])
 
-    assert a2s._recv_response(sock) == payload
+    assert a2s._recv_response(sock, 1.5) == payload
 
 
 def build_multipacket(request_id, total, number, max_size, chunk):
@@ -240,7 +244,7 @@ def test_recv_response_reassembles_multi_packet():
     # arrival order.
     sock = FakeSocket([packet1, packet0])
 
-    assert a2s._recv_response(sock) == payload
+    assert a2s._recv_response(sock, 1.5) == payload
 
 
 def test_recv_response_raises_on_compressed_multi_packet():
@@ -248,7 +252,7 @@ def test_recv_response_raises_on_compressed_multi_packet():
     sock = FakeSocket([packet])
 
     with pytest.raises(a2s.QueryError):
-        a2s._recv_response(sock)
+        a2s._recv_response(sock, 1.5)
 
 
 def test_recv_response_raises_on_malformed_prefix():
@@ -256,7 +260,31 @@ def test_recv_response_raises_on_malformed_prefix():
     sock = FakeSocket([packet])
 
     with pytest.raises(a2s.QueryError):
-        a2s._recv_response(sock)
+        a2s._recv_response(sock, 1.5)
+
+
+def test_recv_response_rejects_mismatched_fragment_ids():
+    # Fragments of one logical response must all carry the same request id -
+    # a packet from a different (stale or injected) response can't be
+    # spliced into the reassembly.
+    packet0 = build_multipacket(1, 2, 0, 1400, b"aa")
+    packet1 = build_multipacket(2, 2, 1, 1400, b"bb")
+    sock = FakeSocket([packet0, packet1])
+
+    with pytest.raises(a2s.QueryError):
+        a2s._recv_response(sock, 1.5)
+
+
+def test_recv_response_deadline_bounds_fragment_flood():
+    # A hostile server can stream fragments that never complete the set
+    # (here: the same packet number over and over). The reassembly loop is
+    # bounded by an overall deadline, not a per-packet timeout, so it must
+    # abort even though every recv() delivers a packet instantly.
+    packet = build_multipacket(7, 2, 0, 1400, b"junk")
+    sock = FakeSocket([packet] * 100000)
+
+    with pytest.raises(socket.timeout):
+        a2s._recv_response(sock, 0.05)
 
 
 # ---------------------------------------------------------------------------

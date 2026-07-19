@@ -36,6 +36,12 @@ PROBE_RATE_LIMIT = "10/second;150/minute"
 # A real favorites list is never more than a few dozen servers; this just
 # stops a single request from fanning out an unbounded number of probes.
 MAX_FAVORITES_PROBE_BATCH = 200
+# A human clicks Refresh (or toggles the not_empty/not_full checkboxes,
+# which also trigger one) a handful of times a minute at most. The refresh
+# itself is deduplicated by the status guard in api_refresh, so this only
+# caps the cost of the requests themselves - thread spawns and master-list
+# refresh cycles an anonymous caller could otherwise keep perpetually hot.
+REFRESH_RATE_LIMIT = "3/second;30/minute"
 
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
 # In-memory storage is correct here, not just a default left unconfigured:
@@ -108,12 +114,16 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         _state["servers"] = enriched
 
 
-def _is_probeable_host(host):
-    """Reject probe targets that resolve to private/loopback/reserved
-    address space. The on-demand probe routes below send a UDP packet to
-    whatever host:port a caller supplies, so without this a caller could use
-    this server to reach into localhost or an internal network rather than
-    the public internet addresses real L4D2 servers live on.
+def _resolve_probeable_host(host):
+    """Resolve a probe target and return its IP as a string, or None if it
+    isn't a public address. The on-demand probe routes below send a UDP
+    packet to whatever host:port a caller supplies, so two properties matter:
+    only globally routable addresses are allowed (not localhost, internal
+    networks, CGNAT, etc. - real L4D2 servers live on the public internet),
+    and callers must probe the *returned* IP, not the original name.
+    Re-resolving at send time would let a DNS name pass this check with one
+    (public) answer and deliver the actual packet somewhere else entirely
+    (DNS rebinding).
     """
     try:
         addr = ipaddress.ip_address(host)
@@ -121,21 +131,16 @@ def _is_probeable_host(host):
         try:
             addr = ipaddress.ip_address(socket.gethostbyname(host))
         except (socket.gaierror, ValueError):
-            return False
-    return not (
-        addr.is_private or addr.is_loopback or addr.is_link_local
-        or addr.is_reserved or addr.is_multicast or addr.is_unspecified
-    )
+            return None
+    return str(addr) if addr.is_global else None
 
 
 def _refresh(cfg, api_key, not_empty, not_full):
-    with _state_lock:
-        if _state["status"] == "refreshing":
-            return
-        _state["status"] = "refreshing"
-        _state["error"] = None
-    _cancel_event.clear()
-
+    """Background-thread body of a refresh. api_refresh has already flipped
+    status to "refreshing" (synchronously, so its own response and any
+    immediately-following poll observe it) and cleared the cancel event;
+    this just does the work and records the outcome.
+    """
     try:
         _fetch_all(cfg, api_key, not_empty, not_full, _cancel_event)
         with _state_lock:
@@ -211,11 +216,12 @@ def api_server_players(host, port):
     # sidebar - querying A2S_PLAYER for every server on every poll would
     # multiply outbound UDP traffic by the whole server list for data
     # nobody's looking at.
-    if not _is_probeable_host(host):
+    ip = _resolve_probeable_host(host)
+    if ip is None:
         return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
-        players = a2s.query_players(host, port, timeout=timeout)
+        players = a2s.query_players(ip, port, timeout=timeout)
         return jsonify({"players": players})
     except a2s.QueryError as e:
         return jsonify({"error": str(e)}), 502
@@ -240,11 +246,12 @@ def api_server_rules(host, port):
     """
     # Same on-demand, sidebar-only pattern as /players - rules can be a
     # sizeable cvar dump and most users never expand the section.
-    if not _is_probeable_host(host):
+    ip = _resolve_probeable_host(host)
+    if ip is None:
         return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
-        rules = a2s.query_rules(host, port, timeout=timeout)
+        rules = a2s.query_rules(ip, port, timeout=timeout)
         return jsonify({"rules": rules})
     except a2s.QueryError as e:
         return jsonify({"error": str(e)}), 502
@@ -268,13 +275,17 @@ def api_server_info(host, port):
     502 response JSON (server didn't respond or sent a malformed reply):
         {"error": string}
     """
-    if not _is_probeable_host(host):
+    ip = _resolve_probeable_host(host)
+    if ip is None:
         return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
-    result = probe_server({"addr": "{}:{}".format(host, port)}, timeout)
+    result = probe_server({"addr": "{}:{}".format(ip, port)}, timeout)
     if result is None:
         return jsonify({"error": "no response"}), 502
-    code, name = geoip.lookup_countries({result["host"]}).get(result["host"], ("", ""))
+    code, name = geoip.lookup_countries({ip}).get(ip, ("", ""))
+    # Report the host the caller asked about, not the resolved IP - the
+    # frontend matches this response back to its table row by host:port.
+    result["host"] = host
     result["country_code"] = code
     result["country_name"] = name
     return jsonify(result)
@@ -317,11 +328,16 @@ def api_favorites_probe():
             port = int(port_str)
         except ValueError:
             return None
-        if not _is_probeable_host(host):
+        ip = _resolve_probeable_host(host)
+        if ip is None:
             return {"host": host, "port": port, "online": False}
-        result = probe_server({"addr": addr}, timeout)
+        result = probe_server({"addr": "{}:{}".format(ip, port)}, timeout)
         if result is None:
             return {"host": host, "port": port, "online": False}
+        # Key the result by the address the caller asked about, not the
+        # resolved IP - the frontend matches it back to a favorite by
+        # host:port.
+        result["host"] = host
         result["online"] = True
         return result
 
@@ -340,11 +356,11 @@ def api_favorites_probe():
 
 
 @app.route("/api/refresh", methods=["POST"])
+@limiter.limit(REFRESH_RATE_LIMIT)
 def api_refresh():
     """Start a background refresh: re-fetch the master server list and
     re-probe every candidate over A2S. Returns immediately - poll
-    GET /api/servers for progress. No-op (just returns the current status)
-    if a refresh is already running.
+    GET /api/servers for progress. No-op if a refresh is already running.
 
     Request JSON body (all fields optional):
         {"not_empty": boolean, "not_full": boolean}
@@ -352,15 +368,24 @@ def api_refresh():
         # see steam_api.build_filter
 
     200 response JSON:
-        {"status": "idle" | "refreshing"}
+        {"status": "refreshing"}
     """
     api_key = app.config["STEAM_BROWSER_API_KEY"]
     body = request.get_json(silent=True) or {}
     not_empty = bool(body.get("not_empty"))
     not_full = bool(body.get("not_full"))
-    threading.Thread(target=_refresh, args=(DEFAULT_CONFIG, api_key, not_empty, not_full), daemon=True).start()
     with _state_lock:
-        return jsonify({"status": _state["status"]})
+        if _state["status"] == "refreshing":
+            return jsonify({"status": "refreshing"})
+        # Flip status here, synchronously, rather than inside the thread:
+        # the frontend only starts polling when it observes "refreshing", so
+        # a response (or an immediate GET /api/servers) racing the thread's
+        # first instructions could otherwise see "idle" and never poll.
+        _state["status"] = "refreshing"
+        _state["error"] = None
+    _cancel_event.clear()
+    threading.Thread(target=_refresh, args=(DEFAULT_CONFIG, api_key, not_empty, not_full), daemon=True).start()
+    return jsonify({"status": "refreshing"})
 
 
 @app.route("/api/refresh/stop", methods=["POST"])
@@ -428,6 +453,11 @@ def main():
     application = create_app()
     application.config["DEV_MODE"] = args.dev
 
+    # Flask's dev server announces its listen address itself; waitress only
+    # logs it to a logger nothing configures, so print it in both cases.
+    # flush: under a pipe/log redirect stdout is block-buffered, and serve()
+    # below never returns to flush it.
+    print("Serving on http://{}:{}".format(args.host, args.port), flush=True)
     if args.dev:
         application.run(host=args.host, port=args.port)
     else:

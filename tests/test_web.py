@@ -123,6 +123,21 @@ def test_api_server_rules_rejects_private_host(client, monkeypatch):
     assert not called
 
 
+def test_api_server_players_probes_the_validated_ip_not_the_hostname(client, monkeypatch):
+    """The address that passed the public-IP check must be the one probed.
+    Passing the hostname through would resolve it a second time at send,
+    letting a rebinding DNS name answer the check with a public IP and the
+    probe with a private one.
+    """
+    probed_hosts = []
+    monkeypatch.setattr(web_module.socket, "gethostbyname", lambda host: "5.6.7.8")
+    monkeypatch.setattr(a2s, "query_players", lambda host, port, timeout: probed_hosts.append(host) or [])
+
+    resp = client.get("/api/servers/rebind.example.com/27015/players")
+    assert resp.status_code == 200
+    assert probed_hosts == ["5.6.7.8"]
+
+
 # ---------------------------------------------------------------------------
 # POST /api/refresh and /api/refresh/stop
 # ---------------------------------------------------------------------------
@@ -139,10 +154,10 @@ def test_api_refresh_populates_servers_and_returns_to_idle(client, monkeypatch):
 
     resp = client.post("/api/refresh")
     assert resp.status_code == 200
-    # Whether the spawned thread has flipped status to "refreshing" by the
-    # time this handler reads it is a genuine race (see _refresh) - only
-    # the eventual settled state is worth asserting on.
-    assert resp.get_json()["status"] in ("idle", "refreshing")
+    # api_refresh flips status synchronously before spawning the worker
+    # thread, so the response (and any immediate poll) deterministically
+    # sees "refreshing" - the frontend relies on that to start polling.
+    assert resp.get_json()["status"] == "refreshing"
 
     _wait_until_not_refreshing()
 

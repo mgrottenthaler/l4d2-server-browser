@@ -360,9 +360,16 @@
 
   function findServer(selected) {
     if (!selected) return null;
-    return state.servers.filter(function (s) {
+    var match = state.servers.filter(function (s) {
       return s.host === selected.host && s.port === selected.port;
-    })[0] || null;
+    })[0];
+    if (match) return match;
+    // Favorites that weren't in the last Internet refresh only exist as
+    // direct-probe results in favoriteServers - without this fallback,
+    // clicking such a row could never open the sidebar (and the poll loop
+    // would drop its selection).
+    var probed = state.favoriteServers[selected.host + ":" + selected.port];
+    return probed && probed.online !== false ? probed : null;
   }
 
   function locationText(s) {
@@ -678,6 +685,7 @@
         tr.querySelector(".fav-star").addEventListener("click", function (e) {
           e.stopPropagation();
           state.favorites.delete(favoriteKey(s));
+          delete state.favoriteServers[favoriteKey(s)];
           saveFavorites();
           render();
         });
@@ -703,6 +711,7 @@
         var key = favoriteKey(s);
         if (state.favorites.has(key)) {
           state.favorites.delete(key);
+          delete state.favoriteServers[key];
         } else {
           state.favorites.add(key);
         }
@@ -787,10 +796,9 @@
         state.lastUpdated = data.last_updated;
         state.candidateCount = data.candidate_count;
 
-        // Drop the selection if that server is no longer in the list.
-        if (state.selected && !state.servers.some(function (s) {
-          return s.host === state.selected.host && s.port === state.selected.port;
-        })) {
+        // Drop the selection if that server is no longer known anywhere
+        // (neither the refreshed list nor a probed favorite).
+        if (state.selected && !findServer(state.selected)) {
           state.selected = null;
           state.playerQuery = null;
           state.ruleQuery = null;
@@ -1023,6 +1031,15 @@
   [els.name, els.map].forEach(function (el) {
     el.addEventListener("input", render);
   });
+  // The saved.mode/saved.campaign fallbacks in populateModeOptions()/
+  // populateCampaignOptions() exist only to restore a persisted selection
+  // once options arrive from live data; drop them as soon as the user
+  // touches the select (registered before the render listeners below so
+  // the very render triggered by the change already ignores them) -
+  // otherwise choosing <All> ("") falls through "value || saved" back to
+  // the stale saved value and the filter snaps right back.
+  els.mode.addEventListener("change", function () { saved.mode = ""; });
+  els.campaign.addEventListener("change", function () { saved.campaign = ""; });
   [els.mode, els.campaign, els.ping, els.secure, els.noPassword, els.official].forEach(function (el) {
     el.addEventListener("change", render);
   });

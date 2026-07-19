@@ -27,16 +27,32 @@ def _read_cstring(data, offset):
     return data[offset:end].decode("utf-8", errors="replace"), end + 1
 
 
-def _recv_response(sock):
+def _recv(sock, deadline):
+    """recv() bounded by an absolute deadline rather than the socket's
+    per-call timeout: multi-packet reassembly below calls this in a loop,
+    and a per-call timeout alone would let a server that keeps streaming
+    junk fragments hold the calling thread forever.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise socket.timeout("overall response deadline exceeded")
+    sock.settimeout(remaining)
+    return sock.recv(65535)
+
+
+def _recv_response(sock, timeout):
     """Receive one A2S response, transparently reassembling it if the
     server split it across multiple UDP packets (common for A2S_RULES on
     servers with many cvars). Returns the payload after the single-packet
     0xFFFFFFFF prefix, i.e. starting at the header byte ('I'/'D'/'E'/'A').
+    `timeout` bounds the whole (possibly multi-packet) response, not each
+    packet.
 
     Bzip2-compressed multi-packet responses (rare - opt-in server side,
     not used by dedicated L4D2 servers in practice) are not supported.
     """
-    data, _ = sock.recvfrom(65535)
+    deadline = time.monotonic() + timeout
+    data = _recv(sock, deadline)
     prefix = struct.unpack_from("<i", data, 0)[0]
     if prefix == -1:
         return data[4:]
@@ -49,11 +65,13 @@ def _recv_response(sock):
 
     parts = {number: data[12:]}
     while len(parts) < total:
-        data, _ = sock.recvfrom(65535)
+        data = _recv(sock, deadline)
         prefix = struct.unpack_from("<i", data, 0)[0]
         if prefix != -2:
             raise QueryError("malformed multi-packet response")
-        _, total, number, _max_size = struct.unpack_from("<iBBh", data, 4)
+        fragment_id, total, number, _max_size = struct.unpack_from("<iBBh", data, 4)
+        if fragment_id != request_id:
+            raise QueryError("mismatched multi-packet response ids")
         parts[number] = data[12:]
 
     payload = b"".join(parts[i] for i in range(total))
@@ -74,7 +92,7 @@ def _parse_info_response(data):
     map_name, offset = _read_cstring(data, offset)
     folder, offset = _read_cstring(data, offset)
     game, offset = _read_cstring(data, offset)
-    app_id = struct.unpack_from("<h", data, offset)[0]
+    app_id = struct.unpack_from("<H", data, offset)[0]
     offset += 2
     players = data[offset]
     offset += 1
@@ -143,14 +161,24 @@ def query_info(host, port, timeout=1.5):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:
+        # connect() pins the peer: the kernel drops datagrams from any other
+        # source, and the address is resolved exactly once (web.py validates
+        # the resolved IP before handing it here - re-resolving at send time
+        # would reopen that check to DNS rebinding).
+        sock.connect((host, port))
         start = time.perf_counter()
-        sock.sendto(A2S_INFO_REQUEST, (host, port))
-        data = _recv_response(sock)
+        sock.send(A2S_INFO_REQUEST)
+        data = _recv_response(sock, timeout)
 
         if len(data) > 1 and data[0] == HEADER_CHALLENGE:
             challenge = data[1:5]
-            sock.sendto(A2S_INFO_REQUEST + challenge, (host, port))
-            data = _recv_response(sock)
+            # Restart the clock: latency should be one round trip, but the
+            # challenge handshake (mandatory on servers patched since Valve's
+            # 2020 anti-reflection change, i.e. nearly all of them) would
+            # otherwise double the reported value.
+            start = time.perf_counter()
+            sock.send(A2S_INFO_REQUEST + challenge)
+            data = _recv_response(sock, timeout)
 
         latency_ms = (time.perf_counter() - start) * 1000
 
@@ -200,14 +228,15 @@ def query_players(host, port, timeout=1.5):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:
+        sock.connect((host, port))  # see query_info for why connect()
         challenge = b"\xFF\xFF\xFF\xFF"
-        sock.sendto(A2S_PLAYER_REQUEST_HEADER + challenge, (host, port))
-        data = _recv_response(sock)
+        sock.send(A2S_PLAYER_REQUEST_HEADER + challenge)
+        data = _recv_response(sock, timeout)
 
         if len(data) > 1 and data[0] == HEADER_CHALLENGE:
             challenge = data[1:5]
-            sock.sendto(A2S_PLAYER_REQUEST_HEADER + challenge, (host, port))
-            data = _recv_response(sock)
+            sock.send(A2S_PLAYER_REQUEST_HEADER + challenge)
+            data = _recv_response(sock, timeout)
 
         if len(data) < 1 or data[0] != HEADER_PLAYER:
             raise QueryError("unexpected response header from {}:{}".format(host, port))
@@ -246,14 +275,15 @@ def query_rules(host, port, timeout=1.5):
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.settimeout(timeout)
     try:
+        sock.connect((host, port))  # see query_info for why connect()
         challenge = b"\xFF\xFF\xFF\xFF"
-        sock.sendto(A2S_RULES_REQUEST_HEADER + challenge, (host, port))
-        data = _recv_response(sock)
+        sock.send(A2S_RULES_REQUEST_HEADER + challenge)
+        data = _recv_response(sock, timeout)
 
         if len(data) > 1 and data[0] == HEADER_CHALLENGE:
             challenge = data[1:5]
-            sock.sendto(A2S_RULES_REQUEST_HEADER + challenge, (host, port))
-            data = _recv_response(sock)
+            sock.send(A2S_RULES_REQUEST_HEADER + challenge)
+            data = _recv_response(sock, timeout)
 
         if len(data) < 1 or data[0] != HEADER_RULES:
             raise QueryError("unexpected response header from {}:{}".format(host, port))

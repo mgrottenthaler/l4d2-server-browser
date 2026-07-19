@@ -24,4 +24,8 @@ def reset_state():
         web_module._state["candidate_count"] = 0
     web_module._cancel_event.clear()
     web_module.app.config["DEV_MODE"] = False
+    # The limiter's in-memory counters are shared across the whole pytest
+    # run (module-level app), so leaving it on would make tests fail on
+    # accumulated request volume rather than anything they assert.
+    web_module.limiter.enabled = False
     yield

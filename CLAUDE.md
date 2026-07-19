@@ -45,13 +45,18 @@ All server state lives in one in-process dict, `_state`, in
 since it's written from a background thread while being read from Flask's
 request-handling threads.
 
-- `POST /api/refresh` spawns a **daemon thread** running `_refresh()`, which
-  calls `steam_api.fetch_servers()` (Valve's `GetServerList` master-list API,
-  up to `max_servers_to_query` candidates) and then fans out A2S_INFO probes
+- `POST /api/refresh` flips `_state["status"]` to `"refreshing"`
+  **synchronously in the route** (the frontend only starts polling when it
+  observes that status, so it must never race the worker thread), then
+  spawns a **daemon thread** running `_refresh()`, which calls
+  `steam_api.fetch_servers()` (Valve's `GetServerList` master-list API, up
+  to `max_servers_to_query` candidates) and then fans out A2S_INFO probes
   across a `ThreadPoolExecutor` (`browser.probe_server`, one call per
   candidate, `max_workers` concurrent). Results are appended to
   `_state["servers"]` **as they arrive**, not batched at the end, so a client
-  polling mid-refresh sees partial results.
+  polling mid-refresh sees partial results. Rate-limited
+  (`REFRESH_RATE_LIMIT`, `"3/second;30/minute"`) purely as anti-abuse — the
+  status guard already dedupes overlapping refreshes.
 - `GET /api/servers` just returns a snapshot of `_state` (sorted by latency).
   The frontend polls this every 1.5s (`scheduleNextPoll` in `app.js`) while
   `status == "refreshing"` and stops polling once it flips to `idle`/`error`.
@@ -82,11 +87,15 @@ request-handling threads.
   `/api/favorites/probe`) are the only ones that make this server send a UDP
   packet to a caller-chosen address, so unlike everything else in the API
   they're abusable independent of the master-list data behind them. Two
-  guards, both in `web.py`: `_is_probeable_host()` rejects targets that
-  resolve to private/loopback/link-local/reserved/multicast address space
-  (400 on the single-host routes, silently marked `online: false` in
+  guards, both in `web.py`: `_resolve_probeable_host()` resolves the target
+  once and rejects anything that isn't a globally routable IP (`is_global`;
+  400 on the single-host routes, silently marked `online: false` in
   `/api/favorites/probe` — consistent with how it already treats malformed
-  addresses), and `@limiter.limit(PROBE_RATE_LIMIT)` (flask-limiter,
+  addresses) — callers then probe the **returned resolved IP**, never the
+  original hostname, so a rebinding DNS name can't pass the check with one
+  answer and receive the UDP packet at another (`a2s.py` likewise
+  `connect()`s its socket, resolving once and ignoring datagrams from other
+  sources) — and `@limiter.limit(PROBE_RATE_LIMIT)` (flask-limiter,
   `"10/second;150/minute"` per source IP, in-memory storage since this is a
   single-process app) caps request volume. The rate is sized to absorb one
   sidebar click, which fires players+info+rules simultaneously (see
@@ -156,4 +165,9 @@ cvar), checked in priority order since a server can carry multiple
 overlapping tags.
 
 `a2s.py` implements the raw Source A2S UDP protocol (A2S_INFO, A2S_PLAYER,
-A2S_RULES) from scratch — no third-party Source-query library.
+A2S_RULES) from scratch — no third-party Source-query library. Two
+non-obvious behaviors: multi-packet reassembly is bounded by an **overall**
+deadline (per-recv timeouts alone would let a server drip-feeding junk
+fragments pin a thread forever), and `latency_ms` times only the final
+request/response pair — the timer restarts after the A2S_INFO challenge
+handshake, which would otherwise double the reported ping on modern servers.
