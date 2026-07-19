@@ -140,6 +140,14 @@ html, body {
   animation: spin 0.8s linear infinite;
 }
 
+.refresh-btn.spinning:hover {
+  background: linear-gradient(to bottom, #ff6b6b, #c22a2a);
+}
+
+.refresh-btn.spinning:hover .refresh-icon {
+  animation-play-state: paused;
+}
+
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

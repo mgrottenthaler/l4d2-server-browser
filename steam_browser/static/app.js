@@ -640,8 +640,9 @@
       ? "Last refreshed " + new Date(state.lastUpdated * 1000).toLocaleTimeString()
       : "";
 
-    els.refreshBtn.classList.toggle("spinning", state.status === "refreshing");
-    els.refreshBtn.disabled = state.status === "refreshing";
+    var refreshing = state.status === "refreshing";
+    els.refreshBtn.classList.toggle("spinning", refreshing);
+    els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
   }
 
   function fetchServers() {
@@ -691,6 +692,13 @@
     }).then(function () {
       fetchServers();
     });
+  }
+
+  function stopRefresh() {
+    // The backend stops appending new results and flips status back to
+    // idle on its own; the existing poll loop (scheduleNextPoll) picks that
+    // up on its next tick, so whatever was already found stays on screen.
+    fetch("/api/refresh/stop", { method: "POST" });
   }
 
   document.querySelectorAll("#server-table thead th[data-key]").forEach(function (th) {
@@ -862,7 +870,13 @@
     el.addEventListener("click", function (e) { e.preventDefault(); });
   });
 
-  els.refreshBtn.addEventListener("click", triggerRefresh);
+  els.refreshBtn.addEventListener("click", function () {
+    if (state.status === "refreshing") {
+      stopRefresh();
+    } else {
+      triggerRefresh();
+    }
+  });
 
   [els.tabInternet, els.tabFavorites].forEach(function (tab) {
     tab.addEventListener("click", function () {

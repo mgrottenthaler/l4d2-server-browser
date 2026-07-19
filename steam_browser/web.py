@@ -31,9 +31,10 @@ _state = {
     "last_updated": None,
     "candidate_count": 0,
 }
+_cancel_event = threading.Event()
 
 
-def _fetch_all(cfg, api_key, not_empty, not_full):
+def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
     """Fetch every candidate server from the master list (up to
     max_servers_to_query) and probe them, publishing each result to _state
     as soon as it comes in rather than waiting for the whole batch - probing
@@ -62,6 +63,12 @@ def _fetch_all(cfg, api_key, not_empty, not_full):
             if result is not None:
                 with _state_lock:
                     _state["servers"].append(result)
+            if cancel_event.is_set():
+                # Drop futures that haven't started yet; ones already running
+                # are still bounded by query_timeout_s so this returns quickly.
+                for f in futures:
+                    f.cancel()
+                break
 
     with _state_lock:
         results = list(_state["servers"])
@@ -82,9 +89,10 @@ def _refresh(cfg, api_key, not_empty, not_full):
             return
         _state["status"] = "refreshing"
         _state["error"] = None
+    _cancel_event.clear()
 
     try:
-        _fetch_all(cfg, api_key, not_empty, not_full)
+        _fetch_all(cfg, api_key, not_empty, not_full, _cancel_event)
         with _state_lock:
             _state["last_updated"] = time.time()
             _state["status"] = "idle"
@@ -143,6 +151,15 @@ def api_refresh():
     not_empty = bool(body.get("not_empty"))
     not_full = bool(body.get("not_full"))
     threading.Thread(target=_refresh, args=(DEFAULT_CONFIG, api_key, not_empty, not_full), daemon=True).start()
+    with _state_lock:
+        return jsonify({"status": _state["status"]})
+
+
+@app.route("/api/refresh/stop", methods=["POST"])
+def api_refresh_stop():
+    # Leaves whatever servers were already probed in place; _fetch_all just
+    # stops appending more and flips status back to idle on its own.
+    _cancel_event.set()
     with _state_lock:
         return jsonify({"status": _state["status"]})
 
