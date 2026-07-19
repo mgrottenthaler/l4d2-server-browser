@@ -36,7 +36,25 @@ Options:
 
 - `--host HOST` — interface to bind (default: `127.0.0.1`)
 - `--port PORT` — port to bind (default: `5000`)
+- `--dev` — enable developer-only endpoints (currently `GET /api/docs`, a
+  human-readable listing of every `/api/*` route generated from the
+  docstrings on their view functions — always in sync with the code since
+  it's rendered from source at request time, not a checked-in file)
 
 Query tuning (appid, gamedir, worker count, timeouts) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG` — everything user-facing is a
 filter in the web UI itself.
+
+## Testing
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+Unit tests cover the A2S protocol parsers (`a2s.py`), the master-list
+filter builder (`steam_api.py`), mode/map resolution (`browser.py`,
+`maps.py`), and the Flask routes in `web.py` (via `app.test_client()`,
+with `a2s`/`steam_api`/`geoip` calls monkeypatched — no real network
+traffic). See `tests/conftest.py` for the fixtures that reset `web.py`'s
+shared in-process state between tests.
