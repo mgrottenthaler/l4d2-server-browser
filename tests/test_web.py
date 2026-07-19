@@ -168,6 +168,53 @@ def test_api_refresh_stop_sets_cancel_event(client):
 
 
 # ---------------------------------------------------------------------------
+# POST /api/favorites/probe
+# ---------------------------------------------------------------------------
+
+def test_api_favorites_probe_returns_online_and_offline_servers(client, monkeypatch):
+    def fake_probe_server(server, timeout):
+        if server["addr"] == "1.2.3.4:27015":
+            return _fake_server_entry()
+        return None  # offline / no response
+
+    monkeypatch.setattr(web_module, "probe_server", fake_probe_server)
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    resp = client.post(
+        "/api/favorites/probe",
+        json={"servers": ["1.2.3.4:27015", "5.6.7.8:27015"]},
+    )
+    assert resp.status_code == 200
+    servers = {s["host"]: s for s in resp.get_json()["servers"]}
+
+    assert servers["1.2.3.4"]["online"] is True
+    assert servers["1.2.3.4"]["name"] == "Test Server"
+
+    assert servers["5.6.7.8"] == {"host": "5.6.7.8", "port": 27015, "online": False}
+
+
+def test_api_favorites_probe_empty_servers_list_returns_empty(client):
+    resp = client.post("/api/favorites/probe", json={"servers": []})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"servers": []}
+
+
+def test_api_favorites_probe_missing_body_returns_empty(client):
+    resp = client.post("/api/favorites/probe")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"servers": []}
+
+
+def test_api_favorites_probe_skips_malformed_addr(client, monkeypatch):
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: _fake_server_entry())
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    resp = client.post("/api/favorites/probe", json={"servers": ["not-a-valid-addr"]})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"servers": []}
+
+
+# ---------------------------------------------------------------------------
 # GET /api/docs - dev-mode gated
 # ---------------------------------------------------------------------------
 

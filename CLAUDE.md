@@ -65,6 +65,18 @@ request-handling threads.
 - `GET /api/servers/<host>/<port>/players` and `.../rules` are synchronous,
   on-demand A2S_PLAYER/A2S_RULES queries for a single server, run only when
   a user opens that server's sidebar — not part of the background refresh.
+- `POST /api/favorites/probe` probes specific `host:port` addresses over
+  A2S_INFO directly, bypassing `_state`/the master list entirely. This is
+  what makes the Favorites tab show a favorite even when it isn't in the
+  last `/api/refresh` result (offline, a listen server excluded by the
+  `dedicated` filter in `_fetch_all`, or a refresh just hasn't run yet). It
+  reuses `browser.probe_server`, passing it `{"addr": addr}` with no
+  `secure`/`gametype` keys — `probe_server` falls back to the VAC/keywords
+  fields `a2s._parse_info_response` parses from A2S_INFO itself when those
+  keys aren't present, since there's no master-list entry to draw them from.
+  Servers that don't respond come back as `{"host", "port", "online": false}`
+  rather than being omitted, so the frontend can render them as offline
+  instead of them just vanishing.
 - `GET /api/docs` renders a plain-text listing of every `/api/*` route by
   introspecting `app.url_map` and pulling `inspect.getdoc()` off each view
   function at request time — the docstring on a route *is* its
@@ -104,6 +116,18 @@ A few non-obvious frontend behaviors worth knowing before touching them:
 - Elements toggled via `.hidden`/`[hidden]` need the corresponding
   `display:none` present in `style.css` — the JS-side attribute toggle is a
   no-op if the CSS override for `[hidden]` isn't there for that element.
+- The Favorites tab's rows don't come only from `state.servers` —
+  `buildFavoritesRows()` prefers a matching entry there (fresher, from the
+  last master-list refresh) and falls back to `state.favoriteServers`, which
+  `probeFavorites()` populates by calling `POST /api/favorites/probe` for
+  whichever favorites aren't already in `state.servers`. This runs on
+  switching to the Favorites tab, and again (unconditionally, `forceAll`)
+  when Refresh is clicked while that tab is active — the Refresh button's
+  meaning is tab-dependent. A favorite that doesn't respond is kept in the
+  list with `online: false` and rendered as a distinct "Offline" row
+  (`.offline` in `style.css`) rather than disappearing; those rows are
+  exempt from every other filter (name/map/ping/etc.) since there's no data
+  to filter on, and are sorted to the bottom regardless of the active sort.
 
 ## Domain logic
 

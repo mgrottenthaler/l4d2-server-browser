@@ -87,6 +87,37 @@ def _parse_info_response(data):
     visibility = data[offset]  # 0 = public, 1 = password-protected
     offset += 1
 
+    # VAC status, version, and the EDF-gated extra fields (keywords among
+    # them) are enrichment only - a handful of engine forks truncate the
+    # response before them, so any failure here falls back to unknown rather
+    # than invalidating the whole probe.
+    secure = False
+    gametype = ""
+    try:
+        secure = bool(data[offset])
+        offset += 1
+        if app_id == 2400:  # "The Ship" has 3 extra bytes here; unused by L4D2
+            offset += 3
+        _version, offset = _read_cstring(data, offset)
+        if offset < len(data):
+            edf = data[offset]
+            offset += 1
+            if edf & 0x80:
+                offset += 2  # port
+            if edf & 0x10:
+                offset += 8  # SteamID
+            if edf & 0x40:
+                offset += 2  # SourceTV port
+                _tv_name, offset = _read_cstring(data, offset)
+            if edf & 0x20:
+                # Keywords - the same sv_tags string the master list exposes
+                # as "gametype", used here so a directly-probed server (not
+                # sourced from the master list, e.g. a favorite) can still
+                # resolve a game mode.
+                gametype, offset = _read_cstring(data, offset)
+    except (IndexError, struct.error, ValueError):
+        pass
+
     return {
         "protocol": protocol,
         "name": name,
@@ -98,6 +129,8 @@ def _parse_info_response(data):
         "max_players": max_players,
         "bots": bots,
         "password_protected": bool(visibility),
+        "secure": secure,
+        "gametype": gametype,
     }
 
 

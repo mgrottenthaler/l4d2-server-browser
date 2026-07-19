@@ -117,6 +117,8 @@
     technicalCollapsed: saved.technicalCollapsed,
     activeTab: saved.activeTab,
     favorites: loadFavorites(),
+    favoriteServers: {}, // key ("host:port") -> direct-probe result, for favorites not in `servers`
+    favoritesProbing: false,
     selected: null, // { host, port }
     playerQuery: null, // { key, loading, players, error }
     ruleQuery: null, // { key, loading, rules, error }
@@ -271,6 +273,30 @@
     if (campaigns.indexOf(current) !== -1) els.campaign.value = current;
   }
 
+  function buildFavoritesRows() {
+    // The Favorites tab isn't just a filter over the last Internet-tab
+    // refresh - a favorite can be offline, a listen server (excluded from
+    // the background refresh), or simply not covered by the last refresh
+    // at all. Prefer the fresher master-list-sourced entry when one exists;
+    // otherwise fall back to the direct A2S probe kicked off by
+    // probeFavorites() (see fetchServers()/tab-switch/refresh-button below).
+    var seen = {};
+    var rows = [];
+    state.servers.forEach(function (s) {
+      var key = favoriteKey(s);
+      if (state.favorites.has(key)) {
+        rows.push(s);
+        seen[key] = true;
+      }
+    });
+    state.favorites.forEach(function (key) {
+      if (seen[key]) return;
+      var probed = state.favoriteServers[key];
+      if (probed) rows.push(probed);
+    });
+    return rows;
+  }
+
   function getFiltered() {
     var nameQuery = els.name.value.trim().toLowerCase();
     var mapQuery = els.map.value.trim().toLowerCase();
@@ -283,9 +309,12 @@
     var noPassword = els.noPassword.checked;
     var officialOnly = els.official.checked;
     var favoritesOnly = state.activeTab === "favorites";
+    var source = favoritesOnly ? buildFavoritesRows() : state.servers;
 
-    return state.servers.filter(function (s) {
-      if (favoritesOnly && !state.favorites.has(favoriteKey(s))) return false;
+    return source.filter(function (s) {
+      // Offline favorites carry no server data to filter on - always show
+      // them rather than have them silently vanish under an active filter.
+      if (s.online === false) return true;
       if (nameQuery && s.name.toLowerCase().indexOf(nameQuery) === -1) return false;
       if (mapQuery &&
           s.map.toLowerCase().indexOf(mapQuery) === -1 &&
@@ -552,6 +581,14 @@
     populateModeOptions();
     populateCampaignOptions();
     var rows = sortRows(getFiltered());
+    // Offline favorites carry no sortable data - keep them below whatever
+    // the active sort produced instead of interleaving randomly. Array.sort
+    // is spec-stable, so this doesn't disturb the primary sort order.
+    rows.sort(function (a, b) {
+      if (a.online === false && b.online !== false) return 1;
+      if (b.online === false && a.online !== false) return -1;
+      return 0;
+    });
 
     els.rows.innerHTML = "";
     rows.forEach(function (s) {
@@ -560,6 +597,30 @@
       tr.dataset.port = s.port;
       if (isSelected(s)) tr.classList.add("selected");
       var favorited = state.favorites.has(favoriteKey(s));
+
+      if (s.online === false) {
+        tr.classList.add("offline");
+        tr.innerHTML =
+          '<td class="col-fav"><span class="fav-star favorited">&#9733;</span></td>' +
+          '<td class="col-lock"></td>' +
+          '<td class="col-secure"></td>' +
+          '<td class="col-name">' + escapeHtml(s.host) + ":" + s.port + "</td>" +
+          '<td class="col-mode">-</td>' +
+          '<td class="col-campaign">-</td>' +
+          '<td class="col-stage">-</td>' +
+          '<td class="col-ip">' + escapeHtml(s.host) + ":" + s.port + "</td>" +
+          '<td class="col-players">-</td>' +
+          '<td class="col-ping offline-label">Offline</td>';
+        tr.querySelector(".fav-star").addEventListener("click", function (e) {
+          e.stopPropagation();
+          state.favorites.delete(favoriteKey(s));
+          saveFavorites();
+          render();
+        });
+        els.rows.appendChild(tr);
+        return;
+      }
+
       var flag = countryFlag(s.country_code);
       tr.innerHTML =
         '<td class="col-fav"><span class="fav-star' + (favorited ? " favorited" : "") + '">' +
@@ -597,10 +658,12 @@
     els.emptyState.hidden = rows.length !== 0;
     els.table.hidden = rows.length === 0;
     if (rows.length === 0) {
-      if (state.status === "idle" && !state.lastUpdated) {
-        els.emptyState.textContent = "Click refresh to load the server list.";
-      } else if (state.activeTab === "favorites" && state.favorites.size === 0) {
+      if (state.activeTab === "favorites" && state.favorites.size === 0) {
         els.emptyState.textContent = "No favorites yet. Click the star next to a server to add it here.";
+      } else if (state.activeTab === "favorites" && state.favoritesProbing) {
+        els.emptyState.textContent = "Checking favorites…";
+      } else if (state.activeTab === "internet" && state.status === "idle" && !state.lastUpdated) {
+        els.emptyState.textContent = "Click refresh to load the server list.";
       } else {
         els.emptyState.textContent = "No servers match the current filters.";
       }
@@ -622,13 +685,17 @@
 
   function renderStatus(shownCount) {
     var parts = [];
-    if (state.status === "refreshing") {
+    if (state.activeTab === "favorites" && state.favoritesProbing) {
+      parts.push("Checking favorites…");
+    } else if (state.status === "refreshing") {
       parts.push(
         "Refreshing… " + state.servers.length +
         (state.candidateCount ? " of " + state.candidateCount : "") + " responded"
       );
     } else if (state.status === "error") {
       parts.push("Error: " + state.error);
+    } else if (state.activeTab === "favorites") {
+      parts.push("Showing " + shownCount + " favorite" + (shownCount === 1 ? "" : "s"));
     } else {
       parts.push(
         "Showing " + shownCount + " of " + state.servers.length + " responding servers" +
@@ -640,7 +707,7 @@
       ? "Last refreshed " + new Date(state.lastUpdated * 1000).toLocaleTimeString()
       : "";
 
-    var refreshing = state.status === "refreshing";
+    var refreshing = state.status === "refreshing" || state.favoritesProbing;
     els.refreshBtn.classList.toggle("spinning", refreshing);
     els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
   }
@@ -692,6 +759,41 @@
     }).then(function () {
       fetchServers();
     });
+  }
+
+  function probeFavorites(forceAll) {
+    // Servers already present in `servers` came from the last Internet-tab
+    // refresh and are at least as fresh as a direct probe would be, so by
+    // default only chase down favorites that refresh didn't cover (offline,
+    // a listen server, or just never queried this session). The Favorites
+    // tab's own refresh button passes forceAll to re-check every favorite
+    // regardless, same as clicking Refresh on the Internet tab does for it.
+    var keys = Array.from(state.favorites);
+    var targets = forceAll ? keys : keys.filter(function (key) {
+      return !state.servers.some(function (s) { return favoriteKey(s) === key; });
+    });
+    if (targets.length === 0) {
+      render();
+      return;
+    }
+    state.favoritesProbing = true;
+    render();
+    fetch("/api/favorites/probe", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ servers: targets }),
+    })
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        (data.servers || []).forEach(function (s) {
+          state.favoriteServers[s.host + ":" + s.port] = s;
+        });
+      })
+      .catch(function () { /* best-effort; leave prior favoriteServers as-is */ })
+      .then(function () {
+        state.favoritesProbing = false;
+        render();
+      });
   }
 
   function stopRefresh() {
@@ -873,6 +975,8 @@
   els.refreshBtn.addEventListener("click", function () {
     if (state.status === "refreshing") {
       stopRefresh();
+    } else if (state.activeTab === "favorites") {
+      probeFavorites(true);
     } else {
       triggerRefresh();
     }
@@ -882,7 +986,11 @@
     tab.addEventListener("click", function () {
       state.activeTab = tab.dataset.tab;
       applyActiveTabUI();
-      render();
+      if (state.activeTab === "favorites") {
+        probeFavorites(false);
+      } else {
+        render();
+      }
     });
   });
 
@@ -942,4 +1050,7 @@
   });
 
   fetchServers();
+  if (state.activeTab === "favorites") {
+    probeFavorites(false);
+  }
 })();

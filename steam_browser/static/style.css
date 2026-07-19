@@ -539,6 +539,17 @@ tbody td {
 .players-full { color: var(--red); }
 .players-empty { color: var(--text-dim); }
 
+tbody tr.offline {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+tbody tr.offline .col-name {
+  color: var(--text-dim);
+}
+
+.offline-label { color: var(--text-dim); }
+
 .empty-state {
   padding: 40px;
   text-align: center;

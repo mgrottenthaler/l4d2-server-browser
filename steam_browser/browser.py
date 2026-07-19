@@ -33,12 +33,20 @@ def parse_mode(gametype):
 def probe_server(server, timeout):
     """Query a master-list server entry over A2S_INFO and enrich it with
     resolved campaign/stage/mode. Returns None if the server didn't respond.
+
+    `server` only strictly needs an "addr" key ("host:port") - this also
+    doubles as a direct-probe path for servers that didn't come from the
+    master list at all (e.g. a favorite pinged on its own), in which case
+    "secure"/"gametype" are absent and fall back to the VAC/keywords fields
+    A2S_INFO itself reports instead of the master list's.
     """
     host, port_str = server["addr"].rsplit(":", 1)
     port = int(port_str)
     try:
         info, latency_ms = a2s.query_info(host, port, timeout=timeout)
         campaign, stage = maps.resolve(info["map"])
+        secure = server["secure"] if "secure" in server else info.get("secure", False)
+        gametype = server["gametype"] if "gametype" in server else info.get("gametype", "")
         return {
             "host": host,
             "port": port,
@@ -54,8 +62,8 @@ def probe_server(server, timeout):
             "game": info["game"],
             "latency_ms": latency_ms,
             "password_protected": info["password_protected"],
-            "secure": bool(server.get("secure")),
-            "mode": parse_mode(server.get("gametype", "")),
+            "secure": bool(secure),
+            "mode": parse_mode(gametype),
         }
     except a2s.QueryError:
         return None

@@ -105,6 +105,38 @@ def test_probe_server_falls_back_to_master_list_name_when_a2s_name_empty(monkeyp
     assert result["stage"] == "-"
 
 
+def test_probe_server_falls_back_to_a2s_info_when_not_from_master_list(monkeypatch):
+    # A direct probe (e.g. a favorite pinged on its own, not sourced from
+    # the master list) has no "secure"/"gametype" keys to draw on - fall
+    # back to what A2S_INFO itself reports.
+    def fake_query_info(host, port, timeout):
+        return (
+            {
+                "protocol": 17,
+                "name": "Direct Probe Server",
+                "map": "c1m1_hotel",
+                "folder": "left4dead2",
+                "game": "Left 4 Dead 2",
+                "app_id": 550,
+                "players": 2,
+                "max_players": 8,
+                "bots": 0,
+                "password_protected": False,
+                "secure": True,
+                "gametype": "coop,realism",
+            },
+            8.0,
+        )
+
+    monkeypatch.setattr(a2s, "query_info", fake_query_info)
+
+    server = {"addr": "1.2.3.4:27015"}
+    result = browser.probe_server(server, timeout=1.5)
+
+    assert result["secure"] is True
+    assert result["mode"] == "Campaign (Realism)"
+
+
 def test_probe_server_returns_none_on_query_error(monkeypatch):
     def fake_query_info(host, port, timeout):
         raise a2s.QueryError("timed out")

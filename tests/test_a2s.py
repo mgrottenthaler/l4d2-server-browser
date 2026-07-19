@@ -27,6 +27,10 @@ def build_info_payload(
     max_players=8,
     bots=1,
     password_protected=False,
+    include_extra_fields=False,
+    secure=False,
+    version="1.0.0.0",
+    keywords=None,
 ):
     data = struct.pack("<B", protocol)
     data += _cstring(name)
@@ -38,6 +42,15 @@ def build_info_payload(
     data += b"d"  # server type
     data += b"l"  # environment
     data += struct.pack("<B", int(password_protected))
+    if not include_extra_fields:
+        return data
+
+    data += struct.pack("<B", int(secure))
+    data += _cstring(version)
+    edf = 0x20 if keywords is not None else 0
+    data += struct.pack("<B", edf)
+    if keywords is not None:
+        data += _cstring(keywords)
     return data
 
 
@@ -95,6 +108,8 @@ def test_parse_info_response_extracts_all_fields():
         "max_players": 8,
         "bots": 2,
         "password_protected": False,
+        "secure": False,
+        "gametype": "",
     }
 
 
@@ -102,6 +117,34 @@ def test_parse_info_response_password_protected_flag():
     payload = build_info_payload(password_protected=True)
     info = a2s._parse_info_response(payload)
     assert info["password_protected"] is True
+
+
+def test_parse_info_response_missing_vac_and_edf_defaults_to_unknown():
+    # Payload truncated right after visibility (no VAC/version/EDF at all) -
+    # some engine forks omit these; they're enrichment only, not required.
+    payload = build_info_payload(include_extra_fields=False)
+    info = a2s._parse_info_response(payload)
+    assert info["secure"] is False
+    assert info["gametype"] == ""
+
+
+def test_parse_info_response_extracts_vac_status():
+    payload = build_info_payload(include_extra_fields=True, secure=True)
+    info = a2s._parse_info_response(payload)
+    assert info["secure"] is True
+
+
+def test_parse_info_response_extracts_keywords_as_gametype():
+    payload = build_info_payload(include_extra_fields=True, secure=True, keywords="coop,realism")
+    info = a2s._parse_info_response(payload)
+    assert info["gametype"] == "coop,realism"
+
+
+def test_parse_info_response_no_edf_flags_set_leaves_gametype_empty():
+    payload = build_info_payload(include_extra_fields=True, secure=True, keywords=None)
+    info = a2s._parse_info_response(payload)
+    assert info["secure"] is True
+    assert info["gametype"] == ""
 
 
 # ---------------------------------------------------------------------------

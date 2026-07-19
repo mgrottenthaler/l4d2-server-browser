@@ -194,6 +194,56 @@ def api_server_rules(host, port):
         return jsonify({"error": str(e)}), 502
 
 
+@app.route("/api/favorites/probe", methods=["POST"])
+def api_favorites_probe():
+    """Directly probe a specific set of servers over A2S_INFO, independent of
+    the master-list-driven background refresh. Used by the Favorites tab so
+    a favorited server still shows - as online or offline - even if it
+    wasn't in the last /api/refresh result (empty/full filters excluded it,
+    it's a listen server, or a refresh just hasn't run yet this session).
+
+    Request JSON body:
+        {"servers": ["host:port", ...]}
+
+    200 response JSON:
+        {"servers": [server, ...]}
+        # same shape as GET /api/servers's server objects, each with an
+        # added "online" boolean. Entries for servers that didn't respond
+        # only carry {"host", "port", "online": false}.
+    """
+    body = request.get_json(silent=True) or {}
+    addrs = [a for a in (body.get("servers") or []) if isinstance(a, str)]
+    if not addrs:
+        return jsonify({"servers": []})
+
+    timeout = DEFAULT_CONFIG["query_timeout_s"]
+
+    def probe(addr):
+        try:
+            host, port_str = addr.rsplit(":", 1)
+            port = int(port_str)
+        except ValueError:
+            return None
+        result = probe_server({"addr": addr}, timeout)
+        if result is None:
+            return {"host": host, "port": port, "online": False}
+        result["online"] = True
+        return result
+
+    with ThreadPoolExecutor(max_workers=min(50, len(addrs))) as executor:
+        results = [r for r in executor.map(probe, addrs) if r is not None]
+
+    online_hosts = {r["host"] for r in results if r["online"]}
+    countries = geoip.lookup_countries(online_hosts)
+    for r in results:
+        if r["online"]:
+            code, name = countries.get(r["host"], ("", ""))
+            r["country_code"] = code
+            r["country_name"] = name
+
+    return jsonify({"servers": results})
+
+
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
     """Start a background refresh: re-fetch the master server list and
