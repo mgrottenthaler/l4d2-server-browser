@@ -32,14 +32,22 @@ without re-querying, the same way Steam's own server browser works. Click
 column headers to sort, and use the Refresh button to re-query the master
 list.
 
+By default this serves via [waitress](https://github.com/Pylons/waitress),
+a production-ready WSGI server, so it's fine to bind beyond `127.0.0.1` if
+you want to reach it from another device on your network. The routes that
+query an arbitrary `host:port` on request (the per-server sidebar queries
+and favorites probing) are rate-limited and reject private/loopback/reserved
+addresses as targets, so they can't be used to probe your own LAN.
+
 Options:
 
 - `--host HOST` — interface to bind (default: `127.0.0.1`)
 - `--port PORT` — port to bind (default: `5000`)
-- `--dev` — enable developer-only endpoints (currently `GET /api/docs`, a
-  human-readable listing of every `/api/*` route generated from the
-  docstrings on their view functions — always in sync with the code since
-  it's rendered from source at request time, not a checked-in file)
+- `--dev` — serve via Flask's own dev server instead of waitress, and enable
+  developer-only endpoints (currently `GET /api/docs`, a human-readable
+  listing of every `/api/*` route generated from the docstrings on their
+  view functions — always in sync with the code since it's rendered from
+  source at request time, not a checked-in file)
 
 Query tuning (appid, gamedir, worker count, timeouts) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG` — everything user-facing is a

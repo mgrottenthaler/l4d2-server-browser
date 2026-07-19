@@ -107,6 +107,22 @@ def test_api_server_rules_query_error_returns_502(client, monkeypatch):
     assert "error" in resp.get_json()
 
 
+def test_api_server_players_rejects_private_host(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(a2s, "query_players", lambda host, port, timeout: called.append(1) or [])
+    resp = client.get("/api/servers/127.0.0.1/27015/players")
+    assert resp.status_code == 400
+    assert not called  # never reaches a2s - rejected before sending any UDP packet
+
+
+def test_api_server_rules_rejects_private_host(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(a2s, "query_rules", lambda host, port, timeout: called.append(1) or [])
+    resp = client.get("/api/servers/10.0.0.5/27015/rules")
+    assert resp.status_code == 400
+    assert not called
+
+
 # ---------------------------------------------------------------------------
 # POST /api/refresh and /api/refresh/stop
 # ---------------------------------------------------------------------------
@@ -192,6 +208,14 @@ def test_api_server_info_no_response_returns_502(client, monkeypatch):
     assert "error" in resp.get_json()
 
 
+def test_api_server_info_rejects_private_host(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: called.append(1))
+    resp = client.get("/api/servers/localhost/27015/info")
+    assert resp.status_code == 400
+    assert not called  # never probes - "localhost" resolves to a loopback address
+
+
 # ---------------------------------------------------------------------------
 # POST /api/favorites/probe
 # ---------------------------------------------------------------------------
@@ -237,6 +261,24 @@ def test_api_favorites_probe_skips_malformed_addr(client, monkeypatch):
     resp = client.post("/api/favorites/probe", json={"servers": ["not-a-valid-addr"]})
     assert resp.status_code == 200
     assert resp.get_json() == {"servers": []}
+
+
+def test_api_favorites_probe_marks_private_host_offline_without_probing(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: called.append(1))
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    resp = client.post("/api/favorites/probe", json={"servers": ["192.168.1.1:27015"]})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"servers": [{"host": "192.168.1.1", "port": 27015, "online": False}]}
+    assert not called
+
+
+def test_api_favorites_probe_rejects_oversized_batch(client):
+    addrs = ["1.2.3.{}:27015".format(i % 255 + 1) for i in range(web_module.MAX_FAVORITES_PROBE_BATCH + 1)]
+    resp = client.post("/api/favorites/probe", json={"servers": addrs})
+    assert resp.status_code == 413
+    assert "error" in resp.get_json()
 
 
 # ---------------------------------------------------------------------------

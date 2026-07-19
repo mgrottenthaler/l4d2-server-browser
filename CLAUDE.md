@@ -14,11 +14,11 @@ browser. Web-only — there is no CLI entry point.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt      # requests, flask — that's the entire dependency set
+pip install -r requirements.txt      # requests, flask, flask-limiter, waitress
 
-python3 webserver.py                 # serves on http://127.0.0.1:5000
+python3 webserver.py                 # serves on http://127.0.0.1:5000 via waitress
 python3 webserver.py --host 0.0.0.0 --port 8080
-python3 webserver.py --dev           # also enables GET /api/docs
+python3 webserver.py --dev           # Flask's own dev server instead of waitress, also enables GET /api/docs
 
 pip install -r requirements-dev.txt  # adds pytest on top of requirements.txt
 pytest                               # tests/, no network — a2s/steam_api/geoip are monkeypatched
@@ -76,7 +76,22 @@ request-handling threads.
   keys aren't present, since there's no master-list entry to draw them from.
   Servers that don't respond come back as `{"host", "port", "online": false}`
   rather than being omitted, so the frontend can render them as offline
-  instead of them just vanishing.
+  instead of them just vanishing. Capped at `MAX_FAVORITES_PROBE_BATCH`
+  (200) addresses per request — 413 above that.
+- These four on-demand probe routes (`.../players`, `.../rules`, `.../info`,
+  `/api/favorites/probe`) are the only ones that make this server send a UDP
+  packet to a caller-chosen address, so unlike everything else in the API
+  they're abusable independent of the master-list data behind them. Two
+  guards, both in `web.py`: `_is_probeable_host()` rejects targets that
+  resolve to private/loopback/link-local/reserved/multicast address space
+  (400 on the single-host routes, silently marked `online: false` in
+  `/api/favorites/probe` — consistent with how it already treats malformed
+  addresses), and `@limiter.limit(PROBE_RATE_LIMIT)` (flask-limiter,
+  `"10/second;150/minute"` per source IP, in-memory storage since this is a
+  single-process app) caps request volume. The rate is sized to absorb one
+  sidebar click, which fires players+info+rules simultaneously (see
+  `app.js`'s row click handler) plus fast manual browsing — see it as
+  anti-abuse, not a UX-facing limit that normal use should ever hit.
 - `GET /api/docs` renders a plain-text listing of every `/api/*` route by
   introspecting `app.url_map` and pulling `inspect.getdoc()` off each view
   function at request time — the docstring on a route *is* its

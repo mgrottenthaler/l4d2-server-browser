@@ -6,12 +6,16 @@ own server browser).
 
 import argparse
 import inspect
+import ipaddress
 import os
+import socket
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask import Flask, Response, jsonify, request, send_from_directory
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 
 from steam_browser import a2s
 from steam_browser import geoip
@@ -22,7 +26,23 @@ from steam_browser.browser import probe_server
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
+# Bounds request volume on the on-demand probe routes below: sized to absorb
+# one sidebar click (players + info + rules fire together, see app.js's row
+# click handler) plus fast browsing, while still capping a script hammering
+# these endpoints - each one makes this server send UDP packets to a
+# caller-chosen address, so unlike /api/servers this is abusable regardless
+# of the master-list data behind it.
+PROBE_RATE_LIMIT = "10/second;150/minute"
+# A real favorites list is never more than a few dozen servers; this just
+# stops a single request from fanning out an unbounded number of probes.
+MAX_FAVORITES_PROBE_BATCH = 200
+
 app = Flask(__name__, static_folder=STATIC_DIR, static_url_path="")
+# In-memory storage is correct here, not just a default left unconfigured:
+# this app is single-process (one daemon thread does the background refresh,
+# no multi-worker deployment model), so there's no other process a shared
+# store would need to coordinate with.
+limiter = Limiter(get_remote_address, app=app, storage_uri="memory://")
 
 _state_lock = threading.Lock()
 _state = {
@@ -88,6 +108,26 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         _state["servers"] = enriched
 
 
+def _is_probeable_host(host):
+    """Reject probe targets that resolve to private/loopback/reserved
+    address space. The on-demand probe routes below send a UDP packet to
+    whatever host:port a caller supplies, so without this a caller could use
+    this server to reach into localhost or an internal network rather than
+    the public internet addresses real L4D2 servers live on.
+    """
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            addr = ipaddress.ip_address(socket.gethostbyname(host))
+        except (socket.gaierror, ValueError):
+            return False
+    return not (
+        addr.is_private or addr.is_loopback or addr.is_link_local
+        or addr.is_reserved or addr.is_multicast or addr.is_unspecified
+    )
+
+
 def _refresh(cfg, api_key, not_empty, not_full):
     with _state_lock:
         if _state["status"] == "refreshing":
@@ -150,6 +190,7 @@ def api_servers():
 
 
 @app.route("/api/servers/<host>/<int:port>/players")
+@limiter.limit(PROBE_RATE_LIMIT)
 def api_server_players(host, port):
     """Synchronous, on-demand A2S_PLAYER query against one server - not part
     of the background refresh, run only when a user opens that server's
@@ -160,6 +201,9 @@ def api_server_players(host, port):
         {"players": [{"name": string, "score": integer, "duration": number}, ...]}
         # duration is seconds connected to the server
 
+    400 response JSON (host doesn't resolve to a public address):
+        {"error": string}
+
     502 response JSON (server didn't respond or sent a malformed reply):
         {"error": string}
     """
@@ -167,6 +211,8 @@ def api_server_players(host, port):
     # sidebar - querying A2S_PLAYER for every server on every poll would
     # multiply outbound UDP traffic by the whole server list for data
     # nobody's looking at.
+    if not _is_probeable_host(host):
+        return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
         players = a2s.query_players(host, port, timeout=timeout)
@@ -176,6 +222,7 @@ def api_server_players(host, port):
 
 
 @app.route("/api/servers/<host>/<int:port>/rules")
+@limiter.limit(PROBE_RATE_LIMIT)
 def api_server_rules(host, port):
     """Synchronous, on-demand A2S_RULES query against one server - same
     sidebar-only pattern as .../players.
@@ -184,12 +231,17 @@ def api_server_rules(host, port):
         {"rules": [{"name": string, "value": string}, ...]}
         # the server's sv_* cvars as advertised to clients, admin-controlled
 
+    400 response JSON (host doesn't resolve to a public address):
+        {"error": string}
+
     502 response JSON (server didn't respond, doesn't support A2S_RULES,
     or sent a malformed reply):
         {"error": string}
     """
     # Same on-demand, sidebar-only pattern as /players - rules can be a
     # sizeable cvar dump and most users never expand the section.
+    if not _is_probeable_host(host):
+        return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
     try:
         rules = a2s.query_rules(host, port, timeout=timeout)
@@ -199,6 +251,7 @@ def api_server_rules(host, port):
 
 
 @app.route("/api/servers/<host>/<int:port>/info")
+@limiter.limit(PROBE_RATE_LIMIT)
 def api_server_info(host, port):
     """Synchronous, on-demand A2S_INFO query against one server - same
     sidebar-only pattern as .../players and .../rules. Lets the sidebar
@@ -209,9 +262,14 @@ def api_server_info(host, port):
     entries (see that route's docstring), plus "country_code"/"country_name"
     filled in via geoip.
 
+    400 response JSON (host doesn't resolve to a public address):
+        {"error": string}
+
     502 response JSON (server didn't respond or sent a malformed reply):
         {"error": string}
     """
+    if not _is_probeable_host(host):
+        return jsonify({"error": "host not allowed"}), 400
     timeout = DEFAULT_CONFIG["query_timeout_s"]
     result = probe_server({"addr": "{}:{}".format(host, port)}, timeout)
     if result is None:
@@ -223,6 +281,7 @@ def api_server_info(host, port):
 
 
 @app.route("/api/favorites/probe", methods=["POST"])
+@limiter.limit(PROBE_RATE_LIMIT)
 def api_favorites_probe():
     """Directly probe a specific set of servers over A2S_INFO, independent of
     the master-list-driven background refresh. Used by the Favorites tab so
@@ -231,18 +290,24 @@ def api_favorites_probe():
     it's a listen server, or a refresh just hasn't run yet this session).
 
     Request JSON body:
-        {"servers": ["host:port", ...]}
+        {"servers": ["host:port", ...]}   # max 200 entries
 
     200 response JSON:
         {"servers": [server, ...]}
         # same shape as GET /api/servers's server objects, each with an
         # added "online" boolean. Entries for servers that didn't respond
-        # only carry {"host", "port", "online": false}.
+        # or don't resolve to a public address only carry
+        # {"host", "port", "online": false}.
+
+    413 response JSON (more than 200 servers in one request):
+        {"error": string}
     """
     body = request.get_json(silent=True) or {}
     addrs = [a for a in (body.get("servers") or []) if isinstance(a, str)]
     if not addrs:
         return jsonify({"servers": []})
+    if len(addrs) > MAX_FAVORITES_PROBE_BATCH:
+        return jsonify({"error": "too many servers (max {})".format(MAX_FAVORITES_PROBE_BATCH)}), 413
 
     timeout = DEFAULT_CONFIG["query_timeout_s"]
 
@@ -252,6 +317,8 @@ def api_favorites_probe():
             port = int(port_str)
         except ValueError:
             return None
+        if not _is_probeable_host(host):
+            return {"host": host, "port": port, "online": False}
         result = probe_server({"addr": addr}, timeout)
         if result is None:
             return {"host": host, "port": port, "online": False}
@@ -353,13 +420,22 @@ def main():
     parser.add_argument("--port", type=int, default=5000, help="Port to bind (default: 5000)")
     parser.add_argument(
         "--dev", action="store_true",
-        help="Enable developer-only endpoints (currently: GET /api/docs)",
+        help="Enable developer-only endpoints (currently: GET /api/docs) and serve "
+             "via Flask's own dev server instead of waitress",
     )
     args = parser.parse_args()
 
     application = create_app()
     application.config["DEV_MODE"] = args.dev
-    application.run(host=args.host, port=args.port)
+
+    if args.dev:
+        application.run(host=args.host, port=args.port)
+    else:
+        # Flask's built-in server isn't meant to take real request volume -
+        # waitress is a pure-Python WSGI server with no compiled deps, so it
+        # doesn't cost anything beyond requirements.txt to use it by default.
+        from waitress import serve
+        serve(application, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":
