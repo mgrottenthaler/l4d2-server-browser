@@ -5,12 +5,13 @@ own server browser).
 """
 
 import argparse
+import inspect
 import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, Response, jsonify, request, send_from_directory
 
 from steam_browser import a2s
 from steam_browser import geoip
@@ -109,6 +110,32 @@ def index():
 
 @app.route("/api/servers")
 def api_servers():
+    """Snapshot of the current server list and background-refresh status.
+    Call this on a ~1.5s interval while status == "refreshing"; stop
+    polling once it flips to "idle" or "error".
+
+    200 response JSON:
+        {
+          "servers": [server, ...],   # sorted by latency_ms ascending
+          "status": "idle" | "refreshing" | "error",
+          "error": string | null,     # set when status == "error"
+          "last_updated": number | null,  # unix timestamp of last completed refresh
+          "candidate_count": integer  # dedicated servers returned by the master list this refresh
+        }
+
+    Each `server` object:
+        {
+          "host": string, "port": integer,
+          "name": string, "map": string,
+          "campaign": string, "stage": string,   # "-" if map isn't a known L4D2 campaign map
+          "players": integer, "max_players": integer, "bots": integer,
+          "protocol": integer, "folder": string, "game": string,
+          "latency_ms": number,
+          "password_protected": boolean, "secure": boolean,
+          "mode": string,   # e.g. "Campaign", "Versus", "Team Scavenge (Realism)"
+          "country_code": string, "country_name": string  # "" if geoip lookup failed
+        }
+    """
     with _state_lock:
         # Copy + sort under the lock: _fetch_all appends to this same list
         # from a background thread while a refresh is in progress, and
@@ -120,6 +147,18 @@ def api_servers():
 
 @app.route("/api/servers/<host>/<int:port>/players")
 def api_server_players(host, port):
+    """Synchronous, on-demand A2S_PLAYER query against one server - not part
+    of the background refresh, run only when a user opens that server's
+    sidebar (querying every server on every poll would multiply outbound
+    UDP traffic for data nobody's looking at).
+
+    200 response JSON:
+        {"players": [{"name": string, "score": integer, "duration": number}, ...]}
+        # duration is seconds connected to the server
+
+    502 response JSON (server didn't respond or sent a malformed reply):
+        {"error": string}
+    """
     # Live per-server query, run only when a user opens that server's
     # sidebar - querying A2S_PLAYER for every server on every poll would
     # multiply outbound UDP traffic by the whole server list for data
@@ -134,6 +173,17 @@ def api_server_players(host, port):
 
 @app.route("/api/servers/<host>/<int:port>/rules")
 def api_server_rules(host, port):
+    """Synchronous, on-demand A2S_RULES query against one server - same
+    sidebar-only pattern as .../players.
+
+    200 response JSON:
+        {"rules": [{"name": string, "value": string}, ...]}
+        # the server's sv_* cvars as advertised to clients, admin-controlled
+
+    502 response JSON (server didn't respond, doesn't support A2S_RULES,
+    or sent a malformed reply):
+        {"error": string}
+    """
     # Same on-demand, sidebar-only pattern as /players - rules can be a
     # sizeable cvar dump and most users never expand the section.
     timeout = DEFAULT_CONFIG["query_timeout_s"]
@@ -146,6 +196,19 @@ def api_server_rules(host, port):
 
 @app.route("/api/refresh", methods=["POST"])
 def api_refresh():
+    """Start a background refresh: re-fetch the master server list and
+    re-probe every candidate over A2S. Returns immediately - poll
+    GET /api/servers for progress. No-op (just returns the current status)
+    if a refresh is already running.
+
+    Request JSON body (all fields optional):
+        {"not_empty": boolean, "not_full": boolean}
+        # the only two filters Valve's master list honors server-side,
+        # see steam_api.build_filter
+
+    200 response JSON:
+        {"status": "idle" | "refreshing"}
+    """
     api_key = app.config["STEAM_BROWSER_API_KEY"]
     body = request.get_json(silent=True) or {}
     not_empty = bool(body.get("not_empty"))
@@ -157,11 +220,48 @@ def api_refresh():
 
 @app.route("/api/refresh/stop", methods=["POST"])
 def api_refresh_stop():
+    """Cancel an in-progress refresh. Servers already probed are kept in the
+    result set; probes that hadn't started yet are dropped. No-op if no
+    refresh is running.
+
+    200 response JSON:
+        {"status": "idle" | "refreshing"}
+    """
     # Leaves whatever servers were already probed in place; _fetch_all just
     # stops appending more and flips status back to idle on its own.
     _cancel_event.set()
     with _state_lock:
         return jsonify({"status": _state["status"]})
+
+
+@app.route("/api/docs")
+def api_docs():
+    """Human-readable listing of every /api/* route, generated at request
+    time from the docstrings on the view functions above - always in sync
+    with the code since it reads directly from source rather than a
+    checked-in file. Disabled unless the server was started with --dev,
+    since it's a developer convenience, not something to expose publicly.
+
+    200 response: text/plain listing.
+    404 response: dev mode isn't enabled.
+    """
+    if not app.config.get("DEV_MODE"):
+        return jsonify({"error": "not found"}), 404
+
+    lines = ["L4D2 Server Browser API", "=" * 24, ""]
+    rules = sorted(
+        (r for r in app.url_map.iter_rules() if r.rule.startswith("/api/") and r.rule != "/api/docs"),
+        key=lambda r: r.rule,
+    )
+    for rule in rules:
+        methods = sorted(m for m in rule.methods if m not in ("HEAD", "OPTIONS"))
+        view_func = app.view_functions[rule.endpoint]
+        doc = inspect.getdoc(view_func) or "(undocumented)"
+        lines.append("{} {}".format(" & ".join(methods), rule.rule))
+        lines.append("")
+        lines.extend(("    " + line if line else "") for line in doc.splitlines())
+        lines.append("")
+    return Response("\n".join(lines), mimetype="text/plain")
 
 
 def create_app():
@@ -173,9 +273,14 @@ def main():
     parser = argparse.ArgumentParser(description="Left 4 Dead 2 web server browser")
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=5000, help="Port to bind (default: 5000)")
+    parser.add_argument(
+        "--dev", action="store_true",
+        help="Enable developer-only endpoints (currently: GET /api/docs)",
+    )
     args = parser.parse_args()
 
     application = create_app()
+    application.config["DEV_MODE"] = args.dev
     application.run(host=args.host, port=args.port)
 
 
