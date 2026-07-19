@@ -58,3 +58,7 @@ filter builder (`steam_api.py`), mode/map resolution (`browser.py`,
 with `a2s`/`steam_api`/`geoip` calls monkeypatched — no real network
 traffic). See `tests/conftest.py` for the fixtures that reset `web.py`'s
 shared in-process state between tests.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
