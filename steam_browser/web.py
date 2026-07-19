@@ -75,13 +75,17 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         results = list(_state["servers"])
 
     countries = geoip.lookup_countries({r["host"] for r in results})
+    # Build fresh dicts rather than mutating r in place: these are still the
+    # same objects sitting in _state["servers"], which a concurrent
+    # GET /api/servers reads under _state_lock - mutating them here without
+    # the lock would violate that contract.
+    enriched = []
     for r in results:
         code, name = countries.get(r["host"], ("", ""))
-        r["country_code"] = code
-        r["country_name"] = name
+        enriched.append(dict(r, country_code=code, country_name=name))
 
     with _state_lock:
-        _state["servers"] = results
+        _state["servers"] = enriched
 
 
 def _refresh(cfg, api_key, not_empty, not_full):

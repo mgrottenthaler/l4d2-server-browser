@@ -161,6 +161,11 @@ def query_info(host, port, timeout=1.5):
         return info, latency_ms
     except socket.timeout:
         raise QueryError("timed out querying {}:{}".format(host, port))
+    except OSError as e:
+        # sendto/recvfrom on an unroutable or otherwise bad address (e.g.
+        # "Network is unreachable") - one bad candidate shouldn't be able to
+        # take down the whole batch probe in web.py's _fetch_all.
+        raise QueryError("network error querying {}:{}: {}".format(host, port, e))
     except (struct.error, IndexError, ValueError, UnicodeDecodeError) as e:
         raise QueryError("malformed response from {}:{}: {}".format(host, port, e))
     finally:
@@ -210,6 +215,8 @@ def query_players(host, port, timeout=1.5):
         return _parse_player_response(data[1:])
     except socket.timeout:
         raise QueryError("timed out querying {}:{}".format(host, port))
+    except OSError as e:
+        raise QueryError("network error querying {}:{}: {}".format(host, port, e))
     except (struct.error, IndexError, ValueError, UnicodeDecodeError) as e:
         raise QueryError("malformed response from {}:{}: {}".format(host, port, e))
     finally:
@@ -254,6 +261,8 @@ def query_rules(host, port, timeout=1.5):
         return _parse_rules_response(data[1:])
     except socket.timeout:
         raise QueryError("timed out querying {}:{}".format(host, port))
+    except OSError as e:
+        raise QueryError("network error querying {}:{}: {}".format(host, port, e))
     except (struct.error, IndexError, ValueError, UnicodeDecodeError) as e:
         raise QueryError("malformed response from {}:{}: {}".format(host, port, e))
     finally:
