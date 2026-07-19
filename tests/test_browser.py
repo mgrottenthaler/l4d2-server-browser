@@ -13,6 +13,8 @@ from steam_browser import a2s, browser
         ("scavenge", "Scavenge"),
         ("teamscavenge", "Team Scavenge"),
         ("survival", "Survival"),
+        # Live servers tag both "survival" and "survivalversus" together.
+        ("survival,empty,alltalk,survivalversus,secure", "Survival Versus"),
         ("coop,realism", "Campaign (Realism)"),
         ("versus,realism", "Versus (Realism)"),
         ("teamversus,realism", "Team Versus (Realism)"),

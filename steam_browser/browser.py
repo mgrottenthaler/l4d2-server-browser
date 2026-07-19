@@ -7,11 +7,15 @@ from steam_browser import maps
 # "gametype" field (populated from the server's sv_tags cvar). Checked in
 # order so a server tagged both "coop" and "versus" (shouldn't happen, but
 # tags are admin-set and not validated) resolves to the more specific one.
+# "survivalversus" must precede "survival": live servers tag both
+# ("survival,empty,alltalk,survivalversus,secure" observed in the wild),
+# since the mutation runs on top of the base Survival mode.
 MODE_TAG_PRIORITY = [
     ("teamversus", "Team Versus"),
     ("versus", "Versus"),
     ("teamscavenge", "Team Scavenge"),
     ("scavenge", "Scavenge"),
+    ("survivalversus", "Survival Versus"),
     ("survival", "Survival"),
     ("coop", "Campaign"),
 ]

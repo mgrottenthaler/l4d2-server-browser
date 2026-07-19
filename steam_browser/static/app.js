@@ -243,19 +243,35 @@
       String.fromCodePoint(base + (code.charCodeAt(1) - 65));
   }
 
+  // The full set of labels browser.parse_mode() can produce (see
+  // MODE_TAG_PRIORITY/CAMPAIGN_MODE_LABELS in steam_browser/browser.py) -
+  // fixed by the game itself, not something that grows as new servers show
+  // up, so this is hardcoded rather than derived from state.servers. That
+  // also means the filter is usable immediately on page load, before the
+  // first refresh has ever populated state.servers.
+  var MODE_LABELS = [
+    "Campaign",
+    "Campaign (Realism)",
+    "Scavenge",
+    "Survival",
+    "Survival Versus",
+    "Team Scavenge",
+    "Team Versus",
+    "Team Versus (Realism)",
+    "Versus",
+    "Versus (Realism)",
+  ];
+
   function populateModeOptions() {
-    var modes = Array.from(new Set(state.servers.map(function (s) { return s.mode; })))
-      .filter(function (m) { return m && m !== "-"; })
-      .sort();
     var current = els.mode.value || saved.mode;
     els.mode.innerHTML = '<option value="">&lt;All&gt;</option>';
-    modes.forEach(function (m) {
+    MODE_LABELS.forEach(function (m) {
       var opt = document.createElement("option");
       opt.value = m;
       opt.textContent = m;
       els.mode.appendChild(opt);
     });
-    if (modes.indexOf(current) !== -1) els.mode.value = current;
+    if (MODE_LABELS.indexOf(current) !== -1) els.mode.value = current;
   }
 
   function populateCampaignOptions() {
