@@ -194,6 +194,30 @@ def api_server_rules(host, port):
         return jsonify({"error": str(e)}), 502
 
 
+@app.route("/api/servers/<host>/<int:port>/info")
+def api_server_info(host, port):
+    """Synchronous, on-demand A2S_INFO query against one server - same
+    sidebar-only pattern as .../players and .../rules. Lets the sidebar
+    refresh map/mode/name/player-count etc. with a live reading instead of
+    the possibly-stale values from the last full /api/refresh.
+
+    200 response JSON: a server object, same shape as GET /api/servers's
+    entries (see that route's docstring), plus "country_code"/"country_name"
+    filled in via geoip.
+
+    502 response JSON (server didn't respond or sent a malformed reply):
+        {"error": string}
+    """
+    timeout = DEFAULT_CONFIG["query_timeout_s"]
+    result = probe_server({"addr": "{}:{}".format(host, port)}, timeout)
+    if result is None:
+        return jsonify({"error": "no response"}), 502
+    code, name = geoip.lookup_countries({result["host"]}).get(result["host"], ("", ""))
+    result["country_code"] = code
+    result["country_name"] = name
+    return jsonify(result)
+
+
 @app.route("/api/favorites/probe", methods=["POST"])
 def api_favorites_probe():
     """Directly probe a specific set of servers over A2S_INFO, independent of

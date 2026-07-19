@@ -168,6 +168,31 @@ def test_api_refresh_stop_sets_cancel_event(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /api/servers/<host>/<port>/info
+# ---------------------------------------------------------------------------
+
+def test_api_server_info_success(client, monkeypatch):
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: _fake_server_entry())
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {"1.2.3.4": ("de", "Germany")})
+
+    resp = client.get("/api/servers/1.2.3.4/27015/info")
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["name"] == "Test Server"
+    assert body["map"] == "c1m1_hotel"
+    assert body["country_code"] == "de"
+    assert body["country_name"] == "Germany"
+
+
+def test_api_server_info_no_response_returns_502(client, monkeypatch):
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: None)
+
+    resp = client.get("/api/servers/1.2.3.4/27015/info")
+    assert resp.status_code == 502
+    assert "error" in resp.get_json()
+
+
+# ---------------------------------------------------------------------------
 # POST /api/favorites/probe
 # ---------------------------------------------------------------------------
 

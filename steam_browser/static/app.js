@@ -422,6 +422,70 @@
     }
   }
 
+  function patchServerInfo(s) {
+    // Same reasoning as patchPlayerCount: patch the DOM in place rather than
+    // going through render(), so a live A2S_INFO reading (map/mode/name
+    // changed since the last full refresh) can't re-filter the just-clicked
+    // row out of view.
+    if (isSelected(s)) {
+      els.sidebarTitle.textContent = s.name;
+      els.sdStatus.textContent =
+        (s.password_protected ? "Password protected" : "Open") +
+        (s.secure ? " · VAC secured" : " · Not VAC secured");
+      els.sdMode.textContent = s.mode;
+      els.sdCampaign.textContent = s.campaign;
+      els.sdMap.textContent = s.stage;
+      els.sdBots.textContent = s.bots || 0;
+      els.sdProtocol.textContent = s.protocol;
+      els.sdFolder.textContent = s.folder;
+      els.sdGame.textContent = s.game;
+    }
+    var row = els.rows.querySelector('tr[data-host="' + s.host + '"][data-port="' + s.port + '"]');
+    if (row) {
+      var nameCell = row.querySelector(".col-name");
+      if (nameCell) nameCell.textContent = s.name;
+      var modeCell = row.querySelector(".col-mode");
+      if (modeCell) modeCell.textContent = s.mode;
+      var campaignCell = row.querySelector(".col-campaign");
+      if (campaignCell) campaignCell.textContent = s.campaign;
+      var stageCell = row.querySelector(".col-stage");
+      if (stageCell) stageCell.textContent = s.stage;
+      var lockCell = row.querySelector(".col-lock");
+      if (lockCell) lockCell.innerHTML = s.password_protected ? '<span class="lock-icon">&#128274;</span>' : "";
+      var secureCell = row.querySelector(".col-secure");
+      if (secureCell) secureCell.innerHTML = s.secure ? '<span class="secure-icon">&#10003;</span>' : "";
+    }
+    patchPlayerCount(s);
+  }
+
+  function fetchServerInfo(s) {
+    var host = s.host, port = s.port;
+    fetch("/api/servers/" + encodeURIComponent(host) + "/" + port + "/info")
+      .then(function (resp) {
+        return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+      })
+      .then(function (result) {
+        if (!result.ok) return;
+        if (!findServer({ host: host, port: port })) return; // stale, list moved on
+        var info = result.data;
+        s.name = info.name;
+        s.map = info.map;
+        s.campaign = info.campaign;
+        s.stage = info.stage;
+        s.players = info.players;
+        s.max_players = info.max_players;
+        s.bots = info.bots;
+        s.protocol = info.protocol;
+        s.folder = info.folder;
+        s.game = info.game;
+        s.password_protected = info.password_protected;
+        s.secure = info.secure;
+        s.mode = info.mode;
+        patchServerInfo(s);
+      })
+      .catch(function () {});
+  }
+
   function renderPlayers() {
     var q = state.playerQuery;
     if (!q) {
@@ -648,6 +712,7 @@
       tr.addEventListener("click", function () {
         state.selected = { host: s.host, port: s.port };
         fetchPlayers(s);
+        fetchServerInfo(s);
         state.ruleQuery = null;
         if (!state.rulesCollapsed) fetchRules(s);
         render();
