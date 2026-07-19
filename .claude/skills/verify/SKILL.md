@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Verify frontend/backend changes to steam-browser by driving the real web UI in a browser
+description: Verify frontend/backend changes to l4d2-server-browser by driving the real web UI in a browser
 ---
 
 # Running the app

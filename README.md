@@ -1,8 +1,9 @@
-# steam-browser
+# l4d2-server-browser
 
-A Left 4 Dead 2 server browser. Queries the Steam master server list, pings
-candidates with A2S, and resolves each server's map to its campaign/stage
-and game mode. A web UI styled after Steam's own server browser.
+An unofficial Left 4 Dead 2 server browser, not affiliated with or endorsed
+by Valve. Queries the Steam master server list, pings candidates with A2S,
+and resolves each server's map to its campaign/stage and game mode. A web
+UI styled after Steam's own server browser.
 
 ## Setup
 

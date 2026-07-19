@@ -754,6 +754,12 @@ tbody tr.offline .col-name {
   white-space: nowrap;
 }
 
+.disclaimer {
+  color: var(--text-dim);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
 .btn {
   border: none;
   border-radius: 2px;
