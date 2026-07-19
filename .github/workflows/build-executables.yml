@@ -1,0 +1,45 @@
+name: Build executables
+
+# PyInstaller doesn't cross-compile - each OS has to build its own binary -
+# so this fans out across a Linux/Windows/macOS matrix, all running the same
+# build_executable.py. Manual + tag-triggered only: these are release
+# artifacts, not something to rebuild on every push.
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: l4d2-server-browser-linux
+            artifact_path: dist/l4d2-server-browser
+          - os: windows-latest
+            asset_name: l4d2-server-browser-windows.exe
+            artifact_path: dist/l4d2-server-browser.exe
+          - os: macos-latest
+            asset_name: l4d2-server-browser-macos
+            artifact_path: dist/l4d2-server-browser
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install build dependencies
+        run: pip install -r requirements-build.txt
+
+      - name: Build executable
+        run: python build_executable.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.artifact_path }}

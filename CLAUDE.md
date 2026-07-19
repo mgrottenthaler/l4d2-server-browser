@@ -22,16 +22,44 @@ python3 webserver.py --dev           # Flask's own dev server instead of waitres
 
 pip install -r requirements-dev.txt  # adds pytest on top of requirements.txt
 pytest                               # tests/, no network — a2s/steam_api/geoip are monkeypatched
+
+pip install -r requirements-build.txt  # adds pyinstaller on top of requirements.txt
+python3 build_executable.py          # -> dist/l4d2-server-browser(.exe), see "Standalone executable" below
 ```
 
 Requires a `.env` file in the project root with `STEAM-API-KEY=...` (get one
 at https://steamcommunity.com/dev/apikey).
 
-There is no linter or build step in this repo. `pytest` is the test suite
-(see `tests/conftest.py` for the fixtures that reset `web.py`'s shared
-in-process state between tests). `.venv` may also carry a `playwright`
-install (Python bindings + chromium) usable for driving the UI in a real
-browser — see the `verify` skill.
+There is no linter in this repo. `pytest` is the test suite (see
+`tests/conftest.py` for the fixtures that reset `web.py`'s shared in-process
+state between tests). `.venv` may also carry a `playwright` install (Python
+bindings + chromium) usable for driving the UI in a real browser — see the
+`verify` skill.
+
+### Standalone executable
+
+`launcher.py` is an alternate entry point (alongside `webserver.py`, not a
+replacement for it) built into a single-file executable via
+`build_executable.py` (PyInstaller). It starts waitress in a background
+thread on the first free port starting at 5000 and opens the system browser
+to it, so a downloaded binary is double-click-to-run with no venv/`.env`
+setup — on first run it prompts for the Steam Web API key on stdin and
+appends it to a `.env` file next to the executable (not the source tree's
+`.env`, and not baked into the binary, since it's a secret).
+
+Two path-resolution branches in `web.py` (`_project_root()`/`_static_dir()`,
+gated on `sys.frozen`) exist only for this: PyInstaller's `--onefile` mode
+re-extracts bundled data (the `static/` folder, added via `--add-data` in
+`build_executable.py`) to a fresh temp dir (`sys._MEIPASS`) on every launch,
+so anything meant to persist across runs — namely `.env` — has to live next
+to `sys.executable` instead. Neither branch is exercised by `python3
+webserver.py` or the test suite; both only trigger when actually frozen.
+
+PyInstaller doesn't cross-compile, so producing all three (Linux/Windows/
+macOS) executables means running `build_executable.py` on each OS —
+`.github/workflows/build-executables.yml` does this via a runner matrix,
+manually triggered or on a `v*` tag push, and uploads each as a build
+artifact.
 
 Query tuning (appid, gamedir, worker count, per-request timeout) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG`; everything user-facing is a

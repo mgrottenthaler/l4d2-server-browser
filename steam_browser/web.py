@@ -9,6 +9,7 @@ import inspect
 import ipaddress
 import os
 import socket
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,8 +24,27 @@ from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key
 from steam_browser import steam_api
 from steam_browser.browser import probe_server
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+def _project_root():
+    # Under PyInstaller, __file__ resolves inside the onefile temp
+    # extraction dir - a new, empty directory every run - so .env (which
+    # must persist across runs and isn't bundled, since it holds a secret)
+    # instead lives next to the executable itself.
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _static_dir():
+    # PyInstaller's --add-data extracts bundled files under sys._MEIPASS,
+    # not next to this source file (which, frozen, doesn't exist on disk).
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "static")
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+
+
+PROJECT_ROOT = _project_root()
+STATIC_DIR = _static_dir()
 
 # Bounds request volume on the on-demand probe routes below: sized to absorb
 # one sidebar click (players + info + rules fire together, see app.js's row

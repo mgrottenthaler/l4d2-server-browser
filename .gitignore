@@ -3,3 +3,6 @@
 __pycache__/
 *.pyc
 .steam_refresh_token.json
+build/
+dist/
+*.spec

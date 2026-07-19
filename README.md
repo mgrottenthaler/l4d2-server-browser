@@ -53,6 +53,19 @@ Query tuning (appid, gamedir, worker count, timeouts) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG` — everything user-facing is a
 filter in the web UI itself.
 
+## Standalone executable
+
+If you'd rather not set up Python/a venv, grab the prebuilt single-file
+executable for your OS instead (built by
+`.github/workflows/build-executables.yml`, or run
+`python3 build_executable.py` yourself after
+`pip install -r requirements-build.txt`). Double-click it (or run it from a
+terminal) and it starts the server and opens your browser to it — no
+`python3 webserver.py` needed. On first run it asks for your Steam Web API
+key and saves it to a `.env` file next to the executable, so later runs
+don't ask again. This is purely an alternate launch mechanism — the
+`python3 webserver.py` flow above still works exactly as documented.
+
 ## Testing
 
 ```bash
