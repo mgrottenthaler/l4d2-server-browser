@@ -18,14 +18,20 @@ pip install -r requirements.txt      # requests, flask — that's the entire dep
 
 python3 webserver.py                 # serves on http://127.0.0.1:5000
 python3 webserver.py --host 0.0.0.0 --port 8080
+python3 webserver.py --dev           # also enables GET /api/docs
+
+pip install -r requirements-dev.txt  # adds pytest on top of requirements.txt
+pytest                               # tests/, no network — a2s/steam_api/geoip are monkeypatched
 ```
 
 Requires a `.env` file in the project root with `STEAM-API-KEY=...` (get one
 at https://steamcommunity.com/dev/apikey).
 
-There is no test suite, linter, or build step in this repo. `.venv` may also
-carry a `playwright` install (Python bindings + chromium) usable for driving
-the UI in a real browser — see the `verify` skill.
+There is no linter or build step in this repo. `pytest` is the test suite
+(see `tests/conftest.py` for the fixtures that reset `web.py`'s shared
+in-process state between tests). `.venv` may also carry a `playwright`
+install (Python bindings + chromium) usable for driving the UI in a real
+browser — see the `verify` skill.
 
 Query tuning (appid, gamedir, worker count, per-request timeout) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG`; everything user-facing is a
@@ -59,6 +65,13 @@ request-handling threads.
 - `GET /api/servers/<host>/<port>/players` and `.../rules` are synchronous,
   on-demand A2S_PLAYER/A2S_RULES queries for a single server, run only when
   a user opens that server's sidebar — not part of the background refresh.
+- `GET /api/docs` renders a plain-text listing of every `/api/*` route by
+  introspecting `app.url_map` and pulling `inspect.getdoc()` off each view
+  function at request time — the docstring on a route *is* its
+  documentation, there's no separate file to keep in sync. Gated behind
+  `app.config["DEV_MODE"]` (set by `--dev`) and 404s otherwise, since it's a
+  developer convenience, not something to expose on a public deployment.
+  When adding or changing a route, update its docstring, not a separate doc.
 
 Country flags come from `geoip.py`, a best-effort ip-api.com batch lookup
 cached in memory for the process lifetime (never invalidated — an IP's
