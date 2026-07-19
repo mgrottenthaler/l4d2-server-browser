@@ -59,7 +59,10 @@ PyInstaller doesn't cross-compile, so producing all three (Linux/Windows/
 macOS) executables means running `build_executable.py` on each OS —
 `.github/workflows/build-executables.yml` does this via a runner matrix,
 manually triggered or on a `v*` tag push, and uploads each as a build
-artifact.
+artifact. When triggered by a tag push, a second `release` job (gated on
+`github.ref` being a tag, since `workflow_dispatch` runs have none) then
+downloads all three matrix artifacts and publishes them as assets on a
+GitHub Release for that tag via `softprops/action-gh-release`.
 
 Query tuning (appid, gamedir, worker count, per-request timeout) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG`; everything user-facing is a
