@@ -783,3 +783,65 @@ tbody tr.offline .col-name {
 .btn-primary:hover:not(:disabled) {
   filter: brightness(1.15);
 }
+
+/* First-run API key setup modal */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-overlay[hidden] {
+  display: none;
+}
+
+.modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 24px;
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+}
+
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--text-bright);
+}
+
+.modal p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.modal a {
+  color: var(--accent);
+}
+
+.modal .field {
+  margin-bottom: 12px;
+}
+
+.modal .field input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal-error {
+  color: #ff6b6b;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}

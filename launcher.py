@@ -4,30 +4,10 @@ it, for the PyInstaller-built single-file executable. This is an alternate
 launch mechanism only - `python3 webserver.py` still works unchanged and
 doesn't import this module.
 """
-import os
 import socket
-import sys
 import threading
 import time
 import webbrowser
-
-
-def _ensure_api_key(project_root):
-    from steam_browser.config import load_env
-
-    env_path = os.path.join(project_root, ".env")
-    env = load_env(env_path)
-    if env.get("STEAM-API-KEY") or env.get("STEAM_API_KEY") or os.environ.get("STEAM_API_KEY"):
-        return
-
-    print("No Steam Web API key found.")
-    print("Get one at https://steamcommunity.com/dev/apikey")
-    key = input("Enter your Steam Web API key: ").strip()
-    if not key:
-        print("No key entered, exiting.")
-        sys.exit(1)
-    with open(env_path, "a") as f:
-        f.write("STEAM-API-KEY={}\n".format(key))
 
 
 def _free_port(host, preferred):
@@ -55,10 +35,11 @@ def _wait_until_listening(host, port, timeout=10):
 
 
 def main():
-    from steam_browser.web import PROJECT_ROOT, create_app
+    from steam_browser.web import create_app
 
-    _ensure_api_key(PROJECT_ROOT)
-
+    # No API-key preflight here: create_app() starts regardless, and the UI
+    # itself shows a setup banner (POST /api/setup/key) when one isn't
+    # configured yet - see web.py's _config_dir()/api_setup_key.
     application = create_app()
 
     host = "127.0.0.1"

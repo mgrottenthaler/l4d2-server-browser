@@ -198,6 +198,60 @@ def test_api_refresh_stop_sets_cancel_event(client):
     assert web_module._cancel_event.is_set()
 
 
+def test_api_refresh_requires_api_key(client):
+    web_module.app.config["STEAM_BROWSER_API_KEY"] = None
+
+    resp = client.post("/api/refresh")
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+    with web_module._state_lock:
+        assert web_module._state["status"] != "refreshing"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/servers has_api_key
+# ---------------------------------------------------------------------------
+
+def test_api_servers_reports_has_api_key_true_when_configured(client):
+    body = client.get("/api/servers").get_json()
+    assert body["has_api_key"] is True
+
+
+def test_api_servers_reports_has_api_key_false_when_missing(client):
+    web_module.app.config["STEAM_BROWSER_API_KEY"] = None
+    body = client.get("/api/servers").get_json()
+    assert body["has_api_key"] is False
+
+
+# ---------------------------------------------------------------------------
+# POST /api/setup/key
+# ---------------------------------------------------------------------------
+
+def test_api_setup_key_rejects_empty_key(client):
+    resp = client.post("/api/setup/key", json={"key": "   "})
+    assert resp.status_code == 400
+    assert "error" in resp.get_json()
+
+
+def test_api_setup_key_saves_and_updates_running_config(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(web_module, "CONFIG_DIR", str(tmp_path))
+    web_module.app.config["STEAM_BROWSER_API_KEY"] = None
+
+    resp = client.post("/api/setup/key", json={"key": "ABC123"})
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True}
+
+    assert web_module.app.config["STEAM_BROWSER_API_KEY"] == "ABC123"
+    env_contents = (tmp_path / ".env").read_text()
+    assert "STEAM-API-KEY=ABC123" in env_contents
+
+    # A subsequent refresh no longer 400s now that a key is configured.
+    monkeypatch.setattr(web_module.steam_api, "fetch_servers",
+                         lambda api_key, appid, gamedir, limit, not_empty=False, not_full=False: [])
+    resp = client.post("/api/refresh")
+    assert resp.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # GET /api/servers/<host>/<port>/info
 # ---------------------------------------------------------------------------

@@ -20,18 +20,31 @@ from flask_limiter.util import get_remote_address
 
 from steam_browser import a2s
 from steam_browser import geoip
-from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key
+from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key, set_steam_api_key
 from steam_browser import steam_api
 from steam_browser.browser import probe_server
 
 
-def _project_root():
-    # Under PyInstaller, __file__ resolves inside the onefile temp
-    # extraction dir - a new, empty directory every run - so .env (which
-    # must persist across runs and isn't bundled, since it holds a secret)
-    # instead lives next to the executable itself.
+def _config_dir():
+    # Where .env (the Steam Web API key) is read from and written to. Under
+    # PyInstaller, __file__ resolves inside the onefile temp extraction dir -
+    # a new, empty directory every run - so .env can't live there. It also
+    # shouldn't live next to sys.executable: that's wherever the user
+    # happened to save the download (Downloads, a USB stick, a read-only
+    # mount), not a stable or reliably writable location, and it wouldn't
+    # survive the user moving or renaming the executable. Instead this uses
+    # the OS's own per-user config directory, same convention as any other
+    # desktop app.
     if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
+        if sys.platform == "win32":
+            base = os.environ.get("APPDATA") or os.path.expanduser("~")
+        elif sys.platform == "darwin":
+            base = os.path.expanduser("~/Library/Application Support")
+        else:
+            base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+        path = os.path.join(base, "l4d2-server-browser")
+        os.makedirs(path, exist_ok=True)
+        return path
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -43,7 +56,7 @@ def _static_dir():
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 
 
-PROJECT_ROOT = _project_root()
+CONFIG_DIR = _config_dir()
 STATIC_DIR = _static_dir()
 
 # Bounds request volume on the on-demand probe routes below: sized to absorb
@@ -189,7 +202,8 @@ def api_servers():
           "status": "idle" | "refreshing" | "error",
           "error": string | null,     # set when status == "error"
           "last_updated": number | null,  # unix timestamp of last completed refresh
-          "candidate_count": integer  # dedicated servers returned by the master list this refresh
+          "candidate_count": integer,  # dedicated servers returned by the master list this refresh
+          "has_api_key": boolean  # false until a Steam Web API key is configured; see POST /api/setup/key
         }
 
     Each `server` object:
@@ -211,6 +225,7 @@ def api_servers():
         # jsonify()-ing a list that's mutating concurrently can blow up.
         payload = dict(_state)
         payload["servers"] = sorted(_state["servers"], key=lambda r: r["latency_ms"])
+        payload["has_api_key"] = bool(app.config.get("STEAM_BROWSER_API_KEY"))
         return jsonify(payload)
 
 
@@ -389,8 +404,13 @@ def api_refresh():
 
     200 response JSON:
         {"status": "refreshing"}
+
+    400 response JSON (no Steam Web API key configured yet):
+        {"error": string}
     """
-    api_key = app.config["STEAM_BROWSER_API_KEY"]
+    api_key = app.config.get("STEAM_BROWSER_API_KEY")
+    if not api_key:
+        return jsonify({"error": "no Steam Web API key configured"}), 400
     body = request.get_json(silent=True) or {}
     not_empty = bool(body.get("not_empty"))
     not_full = bool(body.get("not_full"))
@@ -424,6 +444,34 @@ def api_refresh_stop():
         return jsonify({"status": _state["status"]})
 
 
+@app.route("/api/setup/key", methods=["POST"])
+def api_setup_key():
+    """Save a Steam Web API key so the browser-only first-run setup banner
+    can configure this installation without the user ever touching .env by
+    hand. Persists to the same file get_steam_api_key() reads (see
+    config.set_steam_api_key for the location - a per-user OS config dir
+    when running from the frozen executable, the project root otherwise) and
+    updates the running app immediately, so /api/refresh works without a
+    restart.
+
+    Request JSON body:
+        {"key": string}
+
+    200 response JSON:
+        {"ok": true}
+
+    400 response JSON (missing/empty key):
+        {"error": string}
+    """
+    body = request.get_json(silent=True) or {}
+    key = (body.get("key") or "").strip()
+    if not key:
+        return jsonify({"error": "key required"}), 400
+    set_steam_api_key(CONFIG_DIR, key)
+    app.config["STEAM_BROWSER_API_KEY"] = key
+    return jsonify({"ok": True})
+
+
 @app.route("/api/docs")
 def api_docs():
     """Human-readable listing of every /api/* route, generated at request
@@ -455,7 +503,10 @@ def api_docs():
 
 
 def create_app():
-    app.config["STEAM_BROWSER_API_KEY"] = get_steam_api_key(PROJECT_ROOT)
+    # May be None - the app still starts and serves the UI, which shows a
+    # setup banner (backed by POST /api/setup/key above) instead of crashing
+    # at startup when no key is configured yet.
+    app.config["STEAM_BROWSER_API_KEY"] = get_steam_api_key(CONFIG_DIR)
     return app
 
 

@@ -109,6 +109,8 @@
     error: null,
     lastUpdated: null,
     candidateCount: 0,
+    hasApiKey: true, // optimistic until the first GET /api/servers response says otherwise, so the modal doesn't flash on every load
+
     sortKey: saved.sortKey,
     sortDir: saved.sortDir,
     filtersCollapsed: saved.filtersCollapsed,
@@ -180,6 +182,10 @@
     sidebarRulesStatus: document.getElementById("sidebar-rules-status"),
     sidebarTechnical: document.getElementById("sidebar-technical"),
     sidebarTechnicalToggle: document.getElementById("sidebar-technical-toggle"),
+    apiKeySetup: document.getElementById("api-key-setup"),
+    apiKeyInput: document.getElementById("api-key-input"),
+    apiKeyError: document.getElementById("api-key-error"),
+    apiKeySave: document.getElementById("api-key-save"),
   };
 
   // Restore saved filter values into the form before first render.
@@ -802,6 +808,10 @@
     els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
   }
 
+  function renderApiKeySetup() {
+    els.apiKeySetup.hidden = state.hasApiKey;
+  }
+
   function fetchServers() {
     return fetch("/api/servers")
       .then(function (resp) { return resp.json(); })
@@ -811,6 +821,8 @@
         state.error = data.error;
         state.lastUpdated = data.last_updated;
         state.candidateCount = data.candidate_count;
+        state.hasApiKey = !!data.has_api_key;
+        renderApiKeySetup();
 
         // Drop the selection if that server is no longer known anywhere
         // (neither the refreshed list nor a probed favorite).
@@ -836,6 +848,11 @@
   }
 
   function triggerRefresh() {
+    if (!state.hasApiKey) {
+      els.apiKeySetup.hidden = false;
+      els.apiKeyInput.focus();
+      return;
+    }
     // not_empty/not_full are the only filters Valve's master server list
     // honors server-side (secure and password filters are silently ignored
     // or broken there - see steam_api.build_filter), so pushing just these
@@ -1145,6 +1162,45 @@
     if (uri && navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(uri);
     }
+  });
+
+  function saveApiKey() {
+    var key = els.apiKeyInput.value.trim();
+    if (!key) {
+      els.apiKeyError.textContent = "Enter a key first.";
+      els.apiKeyError.hidden = false;
+      return;
+    }
+    els.apiKeySave.disabled = true;
+    fetch("/api/setup/key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: key }),
+    })
+      .then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
+      .then(function (result) {
+        if (!result.ok) {
+          els.apiKeyError.textContent = result.data.error || "Couldn't save the key.";
+          els.apiKeyError.hidden = false;
+          return;
+        }
+        els.apiKeyError.hidden = true;
+        state.hasApiKey = true;
+        renderApiKeySetup();
+        triggerRefresh();
+      })
+      .catch(function () {
+        els.apiKeyError.textContent = "Couldn't reach the server - try again.";
+        els.apiKeyError.hidden = false;
+      })
+      .then(function () {
+        els.apiKeySave.disabled = false;
+      });
+  }
+
+  els.apiKeySave.addEventListener("click", saveApiKey);
+  els.apiKeyInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") saveApiKey();
   });
 
   fetchServers();

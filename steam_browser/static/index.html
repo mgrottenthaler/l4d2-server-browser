@@ -9,6 +9,22 @@
 <body>
 <div class="window">
 
+  <div id="api-key-setup" class="modal-overlay" hidden>
+    <div class="modal">
+      <h2>Steam Web API Key Required</h2>
+      <p>This browser needs a Steam Web API key to query Valve's server list. It's free and only takes a moment.</p>
+      <p><a href="https://steamcommunity.com/dev/apikey" target="_blank" rel="noopener">Get a key at steamcommunity.com/dev/apikey</a></p>
+      <div class="field">
+        <label for="api-key-input">API Key</label>
+        <input id="api-key-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste your key here&hellip;">
+      </div>
+      <div id="api-key-error" class="modal-error" hidden></div>
+      <div class="modal-actions">
+        <button type="button" id="api-key-save" class="btn btn-primary">Save &amp; Continue</button>
+      </div>
+    </div>
+  </div>
+
   <header class="titlebar">
     <h1 class="app-title">Game Servers</h1>
   </header>

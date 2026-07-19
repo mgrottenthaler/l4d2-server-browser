@@ -27,8 +27,12 @@ pip install -r requirements-build.txt  # adds pyinstaller on top of requirements
 python3 build_executable.py          # -> dist/l4d2-server-browser(.exe), see "Standalone executable" below
 ```
 
-Requires a `.env` file in the project root with `STEAM-API-KEY=...` (get one
-at https://steamcommunity.com/dev/apikey).
+Requires a Steam Web API key (get one at https://steamcommunity.com/dev/apikey).
+For `python3 webserver.py`, put it in a `.env` file in the project root as
+`STEAM-API-KEY=...`. If none is configured, the server still starts — the UI
+itself shows a setup banner that saves a key you paste in via
+`POST /api/setup/key` (see "Standalone executable" below and `web.py`'s
+`api_setup_key`).
 
 There is no linter in this repo. `pytest` is the test suite (see
 `tests/conftest.py` for the fixtures that reset `web.py`'s shared in-process
@@ -43,17 +47,31 @@ replacement for it) built into a single-file executable via
 `build_executable.py` (PyInstaller). It starts waitress in a background
 thread on the first free port starting at 5000 and opens the system browser
 to it, so a downloaded binary is double-click-to-run with no venv/`.env`
-setup — on first run it prompts for the Steam Web API key on stdin and
-appends it to a `.env` file next to the executable (not the source tree's
-`.env`, and not baked into the binary, since it's a secret).
+setup. It does **not** prompt for the Steam Web API key itself (a console
+prompt only works if a terminal happens to be attached — true on Windows,
+where double-clicking a console-subsystem exe auto-opens one, but generally
+not true on macOS/Linux, where double-clicking a bare executable from a file
+manager often has no attached stdin/stdout at all). Instead `create_app()`
+starts regardless of whether a key is configured, and the browser UI itself
+shows a first-run setup banner (`#api-key-setup` in `index.html`,
+`renderApiKeySetup()`/`saveApiKey()` in `app.js`) that posts a pasted-in key
+to `POST /api/setup/key` — this works identically on every OS since it's
+just the same browser tab `webbrowser.open()` already pops up.
 
-Two path-resolution branches in `web.py` (`_project_root()`/`_static_dir()`,
-gated on `sys.frozen`) exist only for this: PyInstaller's `--onefile` mode
-re-extracts bundled data (the `static/` folder, added via `--add-data` in
-`build_executable.py`) to a fresh temp dir (`sys._MEIPASS`) on every launch,
-so anything meant to persist across runs — namely `.env` — has to live next
-to `sys.executable` instead. Neither branch is exercised by `python3
-webserver.py` or the test suite; both only trigger when actually frozen.
+Two path-resolution branches in `web.py` (`_config_dir()`/`_static_dir()`,
+gated on `sys.frozen`) exist only for the frozen build. PyInstaller's
+`--onefile` mode re-extracts bundled data (the `static/` folder, added via
+`--add-data` in `build_executable.py`) to a fresh temp dir (`sys._MEIPASS`)
+on every launch, so anything meant to persist across runs — namely `.env` —
+can't live there. It also isn't placed next to `sys.executable`: that's
+wherever the user happened to save the download (Downloads, a USB stick, a
+read-only mount) and wouldn't survive moving/renaming the binary. Instead
+`_config_dir()` resolves to the OS's per-user config directory (`%APPDATA%`
+on Windows, `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or
+`~/.config` on Linux) joined with `l4d2-server-browser`, the same convention
+any other desktop app follows. Neither branch is exercised by `python3
+webserver.py` or the test suite (`CONFIG_DIR` there is just the project
+root); both only trigger when actually frozen.
 
 PyInstaller doesn't cross-compile, so producing all three (Linux/Windows/
 macOS) executables means running `build_executable.py` on each OS —
@@ -88,9 +106,18 @@ request-handling threads.
   polling mid-refresh sees partial results. Rate-limited
   (`REFRESH_RATE_LIMIT`, `"3/second;30/minute"`) purely as anti-abuse — the
   status guard already dedupes overlapping refreshes.
-- `GET /api/servers` just returns a snapshot of `_state` (sorted by latency).
-  The frontend polls this every 1.5s (`scheduleNextPoll` in `app.js`) while
+- `GET /api/servers` just returns a snapshot of `_state` (sorted by latency),
+  plus a `has_api_key` boolean read live off `app.config` (not part of
+  `_state`) so the frontend knows whether to show the setup banner. The
+  frontend polls this every 1.5s (`scheduleNextPoll` in `app.js`) while
   `status == "refreshing"` and stops polling once it flips to `idle`/`error`.
+- `POST /api/setup/key` saves a Steam Web API key pasted into the frontend's
+  setup banner: writes it via `config.set_steam_api_key()` (to `CONFIG_DIR`,
+  see "Standalone executable" above) and updates
+  `app.config["STEAM_BROWSER_API_KEY"]` in place, so `/api/refresh` works
+  immediately without a restart. `/api/refresh` itself 400s with a plain
+  error if no key is configured yet, rather than calling `steam_api` with
+  `None` and surfacing whatever Steam's API does with that.
 - `POST /api/refresh/stop` sets a module-level `threading.Event`
   (`_cancel_event`) that `_fetch_all`'s probe loop checks after each
   completed future; on cancel it drops not-yet-started futures and returns
