@@ -158,6 +158,23 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+.quick-refresh-btn {
+  background: transparent;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  margin-right: 8px;
+}
+
+.quick-refresh-btn:hover {
+  background: rgba(102, 192, 244, 0.12);
+  filter: none;
+}
+
+.quick-refresh-btn:active {
+  background: rgba(102, 192, 244, 0.2);
+  filter: none;
+}
+
 .quick-refresh-btn[hidden] {
   display: none;
 }
@@ -165,6 +182,7 @@ html, body {
 .quick-refresh-btn:disabled {
   cursor: default;
   filter: brightness(0.7);
+  background: transparent;
 }
 
 .quick-refresh-btn.spinning .quick-refresh-icon {
