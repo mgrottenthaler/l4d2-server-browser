@@ -153,6 +153,25 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+.quick-refresh-btn[hidden] {
+  display: none;
+}
+
+.quick-refresh-btn:disabled {
+  cursor: default;
+  filter: brightness(0.7);
+}
+
+.quick-refresh-btn.spinning .quick-refresh-icon {
+  display: inline-block;
+  animation: pulse 0.8s linear infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
 /* Table + sidebar row */
 .content {
   flex: 1;

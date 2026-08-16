@@ -4,6 +4,9 @@
   var STORAGE_KEY = "steamBrowser.filters.v1";
   var FAVORITES_KEY = "steamBrowser.favorites.v1";
   var COLUMN_WIDTHS_KEY = "steamBrowser.columnWidths.v1";
+  // Mirrors web.py's MAX_FAVORITES_PROBE_BATCH - split into batches of this
+  // size rather than relying on the shown list staying under the cap.
+  var QUICK_REFRESH_BATCH_SIZE = 200;
 
   var defaultFilters = {
     name: "",
@@ -121,6 +124,7 @@
     favorites: loadFavorites(),
     favoriteServers: {}, // key ("host:port") -> direct-probe result, for favorites not in `servers`
     favoritesProbing: false,
+    quickRefreshing: false,
     selected: null, // { host, port }
     playerQuery: null, // { key, loading, players, error }
     ruleQuery: null, // { key, loading, rules, error }
@@ -138,6 +142,7 @@
     noPassword: document.getElementById("f-no-password"),
     official: document.getElementById("f-official"),
     refreshBtn: document.getElementById("refresh-btn"),
+    quickRefreshBtn: document.getElementById("quick-refresh-btn"),
     rows: document.getElementById("server-rows"),
     emptyState: document.getElementById("empty-state"),
     statusText: document.getElementById("status-text"),
@@ -208,6 +213,10 @@
   function applyActiveTabUI() {
     els.tabInternet.classList.toggle("active", state.activeTab === "internet");
     els.tabFavorites.classList.toggle("active", state.activeTab === "favorites");
+    // The Favorites tab's own Refresh button already re-probes just the
+    // favorites (probeFavorites), so a separate "shown only" action would
+    // be redundant there.
+    els.quickRefreshBtn.hidden = state.activeTab === "favorites";
   }
   applyActiveTabUI();
   // els.mode is repopulated from live data once servers load; the saved
@@ -788,6 +797,8 @@
     var parts = [];
     if (state.activeTab === "favorites" && state.favoritesProbing) {
       parts.push("Checking favorites…");
+    } else if (state.quickRefreshing) {
+      parts.push("Refreshing shown servers…");
     } else if (state.status === "refreshing") {
       parts.push(
         "Refreshing… " + state.servers.length +
@@ -811,6 +822,9 @@
     var refreshing = state.status === "refreshing" || state.favoritesProbing;
     els.refreshBtn.classList.toggle("spinning", refreshing);
     els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
+
+    els.quickRefreshBtn.classList.toggle("spinning", state.quickRefreshing);
+    els.quickRefreshBtn.disabled = state.quickRefreshing || state.status === "refreshing";
   }
 
   function renderApiKeySetup() {
@@ -870,6 +884,61 @@
     }).then(function () {
       fetchServers();
     });
+  }
+
+  function quickRefreshShown() {
+    // Re-probes exactly the servers currently visible under the active
+    // filters (including not_empty/not_full, which - unlike a full
+    // /api/refresh - are only applied client-side here) so a server whose
+    // player count crossed a filter threshold since the last refresh drops
+    // out or appears once render() re-applies those filters below.
+    if (state.quickRefreshing || state.status === "refreshing") return;
+    var targets = getFiltered()
+      .filter(function (s) { return s.online !== false; })
+      .map(function (s) { return s.host + ":" + s.port; });
+    if (targets.length === 0) return;
+
+    var batches = [];
+    for (var i = 0; i < targets.length; i += QUICK_REFRESH_BATCH_SIZE) {
+      batches.push(targets.slice(i, i + QUICK_REFRESH_BATCH_SIZE));
+    }
+
+    state.quickRefreshing = true;
+    render();
+
+    Promise.all(batches.map(function (batch) {
+      return fetch("/api/favorites/probe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ servers: batch }),
+      })
+        .then(function (resp) { return resp.json(); })
+        .catch(function () { return { servers: [] }; });
+    }))
+      .then(function (responses) {
+        var fresh = {};
+        responses.forEach(function (data) {
+          (data.servers || []).forEach(function (s) {
+            fresh[s.host + ":" + s.port] = s;
+          });
+        });
+        // Drop entries that stopped responding (matching what a full
+        // refresh would do - a non-responding server never gets appended),
+        // and patch the rest with the newly probed data in place.
+        state.servers = state.servers
+          .filter(function (s) {
+            var probed = fresh[s.host + ":" + s.port];
+            return !probed || probed.online !== false;
+          })
+          .map(function (s) {
+            var probed = fresh[s.host + ":" + s.port];
+            return probed && probed.online !== false ? probed : s;
+          });
+      })
+      .then(function () {
+        state.quickRefreshing = false;
+        render();
+      });
   }
 
   function probeFavorites(forceAll) {
@@ -1101,6 +1170,8 @@
       triggerRefresh();
     }
   });
+
+  els.quickRefreshBtn.addEventListener("click", quickRefreshShown);
 
   [els.tabInternet, els.tabFavorites].forEach(function (tab) {
     tab.addEventListener("click", function () {
