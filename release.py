@@ -5,10 +5,15 @@ it, and pushes - pushing the vX.Y tag is what triggers
 .github/workflows/build-executables.yml's release job, which builds the
 three platform executables and publishes them as GitHub Release assets.
 
+The confirmation prompt runs *before* anything is committed or tagged, and
+commit+tag+push happen back to back right after - declining or Ctrl-C'ing
+the prompt leaves the tree exactly as it started, never with a dangling
+local-only bump commit/tag to clean up later.
+
 Usage: python3 release.py major|minor [-y]
   major: 1.1 -> 2.0
   minor: 1.1 -> 1.2
-  -y/--yes: push without the confirmation prompt
+  -y/--yes: skip the confirmation prompt
 """
 import argparse
 import os
@@ -42,7 +47,7 @@ def bump(version, part):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("part", choices=["major", "minor"])
-    parser.add_argument("-y", "--yes", action="store_true", help="push without confirming")
+    parser.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
     args = parser.parse_args()
 
     if capture("git", "status", "--porcelain"):
@@ -52,6 +57,20 @@ def main():
     if branch != "main":
         sys.exit("Not on main (currently on {}) - switch branches first.".format(branch))
 
+    run("git", "fetch", "origin", "main")
+    ahead_behind = capture(
+        "git", "rev-list", "--left-right", "--count", "main...origin/main"
+    )
+    ahead, behind = (int(x) for x in ahead_behind.split())
+    if ahead:
+        sys.exit(
+            "main is {} commit(s) ahead of origin/main - push or reset before "
+            "releasing (a previous release run may have been interrupted "
+            "before pushing).".format(ahead)
+        )
+    if behind:
+        sys.exit("main is behind origin/main - pull first.")
+
     current = read_version()
     new = bump(current, args.part)
     tag = "v{}".format(new)
@@ -59,23 +78,26 @@ def main():
     if capture("git", "tag", "--list", tag):
         sys.exit("Tag {} already exists.".format(tag))
 
+    if not args.yes:
+        try:
+            reply = input(
+                "Bump {} -> {}, commit, tag, and push to origin/main now? "
+                "This triggers the release workflow and publishes a public "
+                "GitHub Release. [y/N] ".format(current, new)
+            ).strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            print("\nAborted - nothing was changed.")
+            return
+        if reply != "y":
+            print("Aborted - nothing was changed.")
+            return
+
     with open(VERSION_FILE, "w") as f:
         f.write(new + "\n")
 
     run("git", "add", VERSION_FILE)
     run("git", "commit", "-m", "Bump version to {}".format(tag))
     run("git", "tag", tag)
-    print("Tagged {} (was {}).".format(tag, current))
-
-    if not args.yes:
-        reply = input(
-            "Push commit + tag {} to origin/main now? This triggers the "
-            "release workflow and publishes a public GitHub Release. [y/N] ".format(tag)
-        ).strip().lower()
-        if reply != "y":
-            print("Not pushed. Run `git push origin main {}` when ready.".format(tag))
-            return
-
     run("git", "push", "origin", "main")
     run("git", "push", "origin", tag)
     print("Pushed {}. GitHub Actions will build and publish the release.".format(tag))
