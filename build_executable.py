@@ -35,12 +35,14 @@ def _build_icon(build_dir):
     if sys.platform not in ("win32", "darwin"):
         return None
 
-    import cairosvg
+    import resvg_py
     from PIL import Image
 
     svg_path = os.path.join(HERE, "steam_browser", "static", "icon.svg")
     png_path = os.path.join(build_dir, "icon.png")
-    cairosvg.svg2png(url=svg_path, write_to=png_path, output_width=1024, output_height=1024)
+    png_bytes = resvg_py.svg_to_bytes(svg_path=svg_path, width=1024, height=1024)
+    with open(png_path, "wb") as f:
+        f.write(png_bytes)
     image = Image.open(png_path)
 
     if sys.platform == "win32":

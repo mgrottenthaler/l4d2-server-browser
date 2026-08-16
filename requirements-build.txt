@@ -1,4 +1,4 @@
 -r requirements.txt
 pyinstaller==6.22.1
-cairosvg==2.9.0
+resvg-py==0.4.0
 Pillow==12.3.0
