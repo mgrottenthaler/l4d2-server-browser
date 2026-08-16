@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="42%" r="70%">
+      <stop offset="0%" stop-color="#16202d"/>
+      <stop offset="100%" stop-color="#0a1119"/>
+    </radialGradient>
+    <radialGradient id="face" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#0e161f"/>
+      <stop offset="100%" stop-color="#0a0f16"/>
+    </radialGradient>
+    <linearGradient id="sweep" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#47bfff" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#47bfff" stop-opacity=".85"/>
+    </linearGradient>
+    <radialGradient id="blipGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#7be0ff" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#7be0ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="softGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- outer plate -->
+  <circle cx="256" cy="256" r="248" fill="url(#bg)" stroke="#1a2733" stroke-width="4"/>
+
+  <!-- bezel ring -->
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#2a3d4f" stroke-width="10"/>
+  <circle cx="256" cy="256" r="220" fill="none" stroke="#47bfff" stroke-width="2" opacity=".5"/>
+
+  <!-- radar face -->
+  <circle cx="256" cy="256" r="206" fill="url(#face)"/>
+
+  <!-- range rings -->
+  <circle cx="256" cy="256" r="155" fill="none" stroke="#2f4a5e" stroke-width="2" opacity=".8"/>
+  <circle cx="256" cy="256" r="103" fill="none" stroke="#2f4a5e" stroke-width="2" opacity=".8"/>
+  <circle cx="256" cy="256" r="52" fill="none" stroke="#2f4a5e" stroke-width="2" opacity=".8"/>
+
+  <!-- crosshair -->
+  <line x1="256" y1="50" x2="256" y2="462" stroke="#22364a" stroke-width="2"/>
+  <line x1="50" y1="256" x2="462" y2="256" stroke="#22364a" stroke-width="2"/>
+
+  <!-- sweep wedge, clipped to the radar face -->
+  <clipPath id="faceClip">
+    <circle cx="256" cy="256" r="206"/>
+  </clipPath>
+  <g clip-path="url(#faceClip)">
+    <path d="M256 256 L256 50 A206 206 0 0 1 462 256 Z" fill="url(#sweep)"/>
+  </g>
+
+  <!-- blips: pings found on the sweep -->
+  <g filter="url(#softGlow)">
+    <circle cx="336" cy="150" r="20" fill="url(#blipGlow)"/>
+    <circle cx="336" cy="150" r="6" fill="#eafcff"/>
+
+    <circle cx="392" cy="270" r="16" fill="url(#blipGlow)"/>
+    <circle cx="392" cy="270" r="5" fill="#eafcff"/>
+
+    <circle cx="300" cy="190" r="12" fill="url(#blipGlow)"/>
+    <circle cx="300" cy="190" r="4" fill="#eafcff"/>
+  </g>
+
+  <!-- center hub -->
+  <circle cx="256" cy="256" r="8" fill="#47bfff"/>
+  <circle cx="256" cy="256" r="14" fill="none" stroke="#47bfff" stroke-width="2" opacity=".6"/>
+
+  <!-- bezel tick marks -->
+  <g stroke="#47bfff" stroke-width="3" opacity=".7">
+    <line x1="256" y1="36" x2="256" y2="58"/>
+    <line x1="256" y1="454" x2="256" y2="476"/>
+    <line x1="36" y1="256" x2="58" y2="256"/>
+    <line x1="454" y1="256" x2="476" y2="256"/>
+  </g>
+</svg>
