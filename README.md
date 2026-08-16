@@ -57,15 +57,47 @@ filter in the web UI itself.
 ## Standalone executable
 
 If you'd rather not set up Python/a venv, grab the prebuilt single-file
-executable for your OS instead (built by
-`.github/workflows/build-executables.yml`, or run
-`python3 build_executable.py` yourself after
-`pip install -r requirements-build.txt`). Double-click it (or run it from a
+executable for your OS from the
+[Releases page](../../releases) instead. Double-click it (or run it from a
 terminal) and it starts the server and opens your browser to it — no
-`python3 webserver.py` needed. On first run it asks for your Steam Web API
-key and saves it to a `.env` file next to the executable, so later runs
-don't ask again. This is purely an alternate launch mechanism — the
-`python3 webserver.py` flow above still works exactly as documented.
+`python3 webserver.py` needed. If no Steam Web API key is configured yet,
+the page itself shows a setup banner to paste one into; it's saved to your
+OS's per-user config directory (not next to the executable, since
+PyInstaller's `--onefile` mode re-extracts everything to a fresh temp dir on
+every launch), so later runs don't ask again. This is purely an alternate
+launch mechanism — the `python3 webserver.py` flow above still works
+exactly as documented.
+
+To build it yourself instead of using a prebuilt binary:
+
+```bash
+pip install -r requirements-build.txt
+python3 build_executable.py
+```
+
+This produces `dist/l4d2-server-browser` (or `.exe` on Windows) by freezing
+`launcher.py` with PyInstaller. PyInstaller doesn't cross-compile, so the
+output only runs on the OS you built it on — building all three platforms
+means running this on each one, which is what
+`.github/workflows/build-executables.yml` does on a runner matrix (manually
+triggered, or automatically on a `v*` tag push).
+
+## Releasing
+
+Cutting a release is a version bump plus a tag push, done via:
+
+```bash
+python3 release.py minor   # 1.1 -> 1.2
+python3 release.py major   # 1.1 -> 2.0
+```
+
+This requires a clean working tree on `main`. It bumps `VERSION` (the single
+source of truth for the app's version, also served at `GET /api/version`),
+commits it, tags it `vX.Y`, and — after confirming, since it's public
+(`-y`/`--yes` skips the prompt) — pushes both to `origin`. The pushed tag
+triggers `.github/workflows/build-executables.yml`, which builds the three
+platform executables and publishes them as assets on a new GitHub Release
+for that tag.
 
 ## Testing
 
