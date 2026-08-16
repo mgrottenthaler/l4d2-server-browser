@@ -17,11 +17,12 @@ table never gets rows and stays `hidden` (see `els.table.hidden = rows.length
 
 # Driving it with Playwright
 
-Python `playwright` package works in the repo's venv; installing the browser
-binary needs `python3 -m playwright install chromium` (no `--with-deps`, that
-needs root/sudo which isn't available). Node/npx only resolves to a Windows
-binary in this WSL environment and can't reach `127.0.0.1` cleanly — use the
-Python bindings instead.
+Use the Python `playwright` package, not Node/npx — npx only resolves to a
+Windows binary in this WSL environment and can't reach `127.0.0.1` cleanly.
+It's not always installed in `.venv` (check with `.venv/bin/pip show
+playwright`); if missing, `.venv/bin/pip install playwright` then
+`.venv/bin/python -m playwright install chromium` (no `--with-deps`, that
+needs root/sudo which isn't available).
 
 To get rows on screen, intercept `/api/servers` and fulfill with a fake
 payload matching the real response shape (`{servers, status, error,
