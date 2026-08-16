@@ -38,7 +38,10 @@ def read_version():
 
 
 def bump(version, part):
-    major, minor = (int(x) for x in version.split("."))
+    try:
+        major, minor = (int(x) for x in version.split("."))
+    except ValueError:
+        sys.exit("VERSION file is malformed (expected MAJOR.MINOR, got {!r}).".format(version))
     if part == "major":
         return "{}.0".format(major + 1)
     return "{}.{}".format(major, minor + 1)
@@ -75,8 +78,15 @@ def main():
     new = bump(current, args.part)
     tag = "v{}".format(new)
 
-    if capture("git", "tag", "--list", tag):
-        sys.exit("Tag {} already exists.".format(tag))
+    # Checked against the remote directly rather than local tags: the
+    # earlier `git fetch origin main` only updates the main ref, not tags,
+    # so a tag created out-of-band (another clone, a previous interrupted
+    # run) could exist on origin without being visible locally - and
+    # discovering that only when `git push origin tag` fails, after `git
+    # push origin main` already succeeded, would leave main pushed with no
+    # matching tag.
+    if capture("git", "ls-remote", "--tags", "origin", "refs/tags/{}".format(tag)):
+        sys.exit("Tag {} already exists on origin.".format(tag))
 
     if not args.yes:
         try:

@@ -135,6 +135,11 @@ html, body {
   filter: brightness(0.9);
 }
 
+.icon-btn:disabled {
+  cursor: default;
+  filter: brightness(0.7);
+}
+
 .refresh-btn.spinning .refresh-icon {
   display: inline-block;
   animation: spin 0.8s linear infinite;

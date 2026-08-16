@@ -82,10 +82,19 @@ class _LogWindow:
         self.root.geometry("640x360")
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        icon_path = _window_icon_path()
-        if icon_path:
-            self._icon_image = tk.PhotoImage(file=icon_path)
-            self.root.iconphoto(True, self._icon_image)
+        # Best-effort: this runs before sys.stdout/stderr are redirected to
+        # this window and before logging is configured (both happen after
+        # main() constructs this window), so a PhotoImage failure here (a Tk
+        # build without PNG support, a corrupted bundled icon) has nowhere
+        # to report to in a --windowed build - fall back to no icon rather
+        # than letting it take down the whole launcher silently.
+        try:
+            icon_path = _window_icon_path()
+            if icon_path:
+                self._icon_image = tk.PhotoImage(file=icon_path)
+                self.root.iconphoto(True, self._icon_image)
+        except tk.TclError:
+            icon_path = None
 
         header = tk.Frame(self.root)
         header.pack(fill=tk.X, padx=8, pady=(8, 0))
@@ -157,10 +166,13 @@ def main():
     logger.info("Serving on %s", url)
 
     def _open_browser_when_ready():
-        if _wait_until_listening(host, port):
-            webbrowser.open(url)
-        else:
+        if not _wait_until_listening(host, port):
             logger.warning("Server didn't come up in time - open %s manually.", url)
+            return
+        try:
+            webbrowser.open(url)
+        except webbrowser.Error:
+            logger.warning("Couldn't open a browser automatically - open %s manually.", url)
 
     threading.Thread(target=_open_browser_when_ready, daemon=True).start()
 

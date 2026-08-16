@@ -822,6 +822,12 @@
     var refreshing = state.status === "refreshing" || state.favoritesProbing;
     els.refreshBtn.classList.toggle("spinning", refreshing);
     els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
+    // Disabled (rather than left clickable) while a quick-refresh is in
+    // flight - starting a full refresh at the same time would let it
+    // finish repopulating state.servers before the quick-refresh's merge
+    // runs, which quickRefreshShown's status check now guards against, but
+    // there's no reason to let the user cause that in the first place.
+    els.refreshBtn.disabled = state.quickRefreshing && state.status !== "refreshing";
 
     els.quickRefreshBtn.classList.toggle("spinning", state.quickRefreshing);
     els.quickRefreshBtn.disabled = state.quickRefreshing || state.status === "refreshing";
@@ -906,16 +912,34 @@
     state.quickRefreshing = true;
     render();
 
-    Promise.all(batches.map(function (batch) {
+    // Batches are sent one at a time rather than via Promise.all - staying
+    // well under PROBE_RATE_LIMIT ("10/second") regardless of how many
+    // batches a large server list produces, instead of firing them all in
+    // the same tick and having the tail end silently 429 (swallowed by the
+    // catch below, so those servers would otherwise just stay stale).
+    var responses = [];
+    var sendNext = function (i) {
+      if (i >= batches.length) return Promise.resolve();
       return fetch("/api/favorites/probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ servers: batch }),
+        body: JSON.stringify({ servers: batches[i] }),
       })
         .then(function (resp) { return resp.json(); })
-        .catch(function () { return { servers: [] }; });
-    }))
-      .then(function (responses) {
+        .catch(function () { return { servers: [] }; })
+        .then(function (data) {
+          responses.push(data);
+          return sendNext(i + 1);
+        });
+    };
+
+    sendNext(0)
+      .then(function () {
+        // A full refresh started while these batches were in flight (e.g.
+        // the user clicked Refresh) is already repopulating state.servers
+        // from scratch, so merging this now-stale probe data on top of it
+        // would clobber or drop servers the newer refresh just found.
+        if (state.status === "refreshing") return;
         var fresh = {};
         responses.forEach(function (data) {
           (data.servers || []).forEach(function (s) {

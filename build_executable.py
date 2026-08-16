@@ -51,11 +51,18 @@ def _build_native_icon(build_dir, image):
     """
     if sys.platform == "win32":
         icon_path = os.path.join(build_dir, "icon.ico")
-        image.save(icon_path, format="ICO", sizes=[(s, s) for s in ICON_SIZES])
+        # Pillow's ICO encoder silently drops any requested size over 256
+        # (Windows .ico frames top out there), so 512 in ICON_SIZES would
+        # otherwise be dead weight here.
+        image.save(icon_path, format="ICO", sizes=[(s, s) for s in ICON_SIZES if s <= 256])
         return icon_path
     if sys.platform == "darwin":
         icon_path = os.path.join(build_dir, "icon.icns")
-        image.save(icon_path, format="ICNS", sizes=[(s, s) for s in ICON_SIZES if s <= 512])
+        # No sizes= here: Pillow's ICNS encoder ignores that argument and
+        # always writes its own fixed table (32/64/128/256/512/1024),
+        # capped by the source image's resolution - which the 1024x1024
+        # raster above covers in full.
+        image.save(icon_path, format="ICNS")
         return icon_path
     return None
 
