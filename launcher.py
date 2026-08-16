@@ -5,9 +5,46 @@ launch mechanism only - `python3 webserver.py` still works unchanged and
 doesn't import this module.
 """
 import socket
+import sys
 import threading
 import time
 import webbrowser
+
+
+def _set_windows_console_branding():
+    """Best-effort cosmetic touch for the console window Windows opens on
+    double-click: classic conhost windows don't automatically pick up the
+    icon build_executable.py bakes into the exe via --icon (that only
+    guarantees Explorer/taskbar-pinning show the right icon for the file
+    itself), so set it explicitly and give the window a real title instead
+    of the raw exe path. No-ops silently if any Win32 call fails - Windows
+    Terminal in particular renders its own tab/taskbar icon and ignores
+    this entirely, which is a Windows-side limitation, not fixable here.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        shell32 = ctypes.windll.shell32
+
+        kernel32.SetConsoleTitleW("L4D2 Server Browser")
+
+        hwnd = kernel32.GetConsoleWindow()
+        if not hwnd:
+            return
+        large = ctypes.c_void_p()
+        small = ctypes.c_void_p()
+        shell32.ExtractIconExW(sys.executable, 0, ctypes.byref(large), ctypes.byref(small), 1)
+        WM_SETICON = 0x0080
+        if large.value:
+            user32.SendMessageW(hwnd, WM_SETICON, 1, large.value)
+        if small.value:
+            user32.SendMessageW(hwnd, WM_SETICON, 0, small.value)
+    except (OSError, AttributeError):
+        pass
 
 
 def _free_port(host, preferred):
@@ -35,6 +72,8 @@ def _wait_until_listening(host, port, timeout=10):
 
 
 def main():
+    _set_windows_console_branding()
+
     from steam_browser.web import create_app
 
     # No API-key preflight here: create_app() starts regardless, and the UI
