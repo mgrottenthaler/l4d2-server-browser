@@ -17,15 +17,20 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 def main():
     static_dir = os.path.join(HERE, "steam_browser", "static")
+    version_file = os.path.join(HERE, "VERSION")
     # PyInstaller's --add-data separator differs by OS (":" vs ";"); build
     # it with os.pathsep so this script itself doesn't need to differ.
     add_data = "{}{}{}".format(static_dir, os.pathsep, "static")
+    # VERSION is bundled at the archive root, matching where
+    # steam_browser/version.py looks for it (sys._MEIPASS/VERSION) once frozen.
+    add_version = "{}{}{}".format(version_file, os.pathsep, ".")
 
     PyInstaller.__main__.run([
         os.path.join(HERE, "launcher.py"),
         "--name=l4d2-server-browser",
         "--onefile",
         "--add-data={}".format(add_data),
+        "--add-data={}".format(add_version),
         "--noconfirm",
     ])
 

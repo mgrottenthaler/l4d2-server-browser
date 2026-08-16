@@ -760,6 +760,18 @@ tbody tr.offline .col-name {
   white-space: nowrap;
 }
 
+.actionbar-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.app-version {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 .disclaimer {
   color: var(--text-dim);
   font-size: 11px;

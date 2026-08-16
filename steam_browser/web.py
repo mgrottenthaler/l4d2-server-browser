@@ -23,6 +23,7 @@ from steam_browser import geoip
 from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key, set_steam_api_key
 from steam_browser import steam_api
 from steam_browser.browser import probe_server
+from steam_browser.version import get_version
 
 
 def _config_dir():
@@ -188,6 +189,16 @@ def _refresh(cfg, api_key, not_empty, not_full):
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/api/version")
+def api_version():
+    """Returns the app's release version, read from the VERSION file - the
+    single source of truth also used by release.py and the frozen build.
+
+    200 response JSON: {"version": "1.1"}
+    """
+    return jsonify({"version": get_version()})
 
 
 @app.route("/api/servers")

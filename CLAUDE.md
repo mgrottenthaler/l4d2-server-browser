@@ -82,6 +82,18 @@ artifact. When triggered by a tag push, a second `release` job (gated on
 downloads all three matrix artifacts and publishes them as assets on a
 GitHub Release for that tag via `softprops/action-gh-release`.
 
+`VERSION` (repo root, plain `MAJOR.MINOR` text, matching the `vX.Y` tag
+scheme — no patch component) is the single source of truth for the app's
+version: `steam_browser/version.py` reads it (bundled into the frozen build
+via another `build_executable.py` `--add-data`, same frozen/unfrozen split
+as `_static_dir()`) and serves it at `GET /api/version`, which the frontend
+footer (`#app-version` in `index.html`) fetches once on load. `release.py`
+is the only thing that should bump it: `python3 release.py major|minor`
+requires a clean tree on `main`, bumps `VERSION`, commits, tags `vX.Y`, and
+(after an interactive confirmation, since it triggers a public release —
+skip with `-y`) pushes both — the tag push is what starts the workflow
+above.
+
 Query tuning (appid, gamedir, worker count, per-request timeout) lives in
 `steam_browser/config.py`'s `DEFAULT_CONFIG`; everything user-facing is a
 filter in the web UI itself, not a config value.

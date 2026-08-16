@@ -146,6 +146,7 @@
     filterPanel: document.getElementById("filter-panel"),
     toggleFiltersBtn: document.getElementById("toggle-filters-btn"),
     filterSummary: document.getElementById("filter-summary"),
+    appVersion: document.getElementById("app-version"),
     tabInternet: document.getElementById("tab-internet"),
     tabFavorites: document.getElementById("tab-favorites"),
     sidebar: document.getElementById("server-sidebar"),
@@ -1206,6 +1207,11 @@
   els.apiKeyInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") saveApiKey();
   });
+
+  fetch("/api/version")
+    .then(function (r) { return r.json(); })
+    .then(function (data) { els.appVersion.textContent = "v" + data.version; })
+    .catch(function () {});
 
   fetchServers();
   if (state.activeTab === "favorites") {
