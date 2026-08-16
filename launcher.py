@@ -3,48 +3,22 @@
 it, for the PyInstaller-built single-file executable. This is an alternate
 launch mechanism only - `python3 webserver.py` still works unchanged and
 doesn't import this module.
+
+Built with PyInstaller's --windowed (see build_executable.py), so there's no
+console at all. _LogWindow stands in for one: a small Tk window with our own
+icon and title, regardless of whichever terminal host the OS would otherwise
+pick - notably Windows Terminal, which (when set as the Windows default)
+hosts console apps in its own window and ignores the launched exe's icon and
+window title entirely, which is why a real console here can't be branded
+from inside the app.
 """
+import os
+import queue
 import socket
 import sys
 import threading
 import time
 import webbrowser
-
-
-def _set_windows_console_branding():
-    """Best-effort cosmetic touch for the console window Windows opens on
-    double-click: classic conhost windows don't automatically pick up the
-    icon build_executable.py bakes into the exe via --icon (that only
-    guarantees Explorer/taskbar-pinning show the right icon for the file
-    itself), so set it explicitly and give the window a real title instead
-    of the raw exe path. No-ops silently if any Win32 call fails - Windows
-    Terminal in particular renders its own tab/taskbar icon and ignores
-    this entirely, which is a Windows-side limitation, not fixable here.
-    """
-    if sys.platform != "win32":
-        return
-    try:
-        import ctypes
-
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        shell32 = ctypes.windll.shell32
-
-        kernel32.SetConsoleTitleW("L4D2 Server Browser")
-
-        hwnd = kernel32.GetConsoleWindow()
-        if not hwnd:
-            return
-        large = ctypes.c_void_p()
-        small = ctypes.c_void_p()
-        shell32.ExtractIconExW(sys.executable, 0, ctypes.byref(large), ctypes.byref(small), 1)
-        WM_SETICON = 0x0080
-        if large.value:
-            user32.SendMessageW(hwnd, WM_SETICON, 1, large.value)
-        if small.value:
-            user32.SendMessageW(hwnd, WM_SETICON, 0, small.value)
-    except (OSError, AttributeError):
-        pass
 
 
 def _free_port(host, preferred):
@@ -71,8 +45,89 @@ def _wait_until_listening(host, port, timeout=10):
     return False
 
 
+def _window_icon_path():
+    # Bundled by build_executable.py (--add-data) as window_icon.png at the
+    # onefile archive root, same convention as VERSION - see version.py.
+    # Not present when running unfrozen (`python3 launcher.py` directly);
+    # that's not an officially supported entry point (see module docstring),
+    # so just skip the icon rather than rasterizing the SVG at runtime too.
+    if not getattr(sys, "frozen", False):
+        return None
+    candidate = os.path.join(sys._MEIPASS, "window_icon.png")
+    return candidate if os.path.exists(candidate) else None
+
+
+class _LogWindow:
+    """Stands in for the console window a normal PyInstaller build would
+    open: our own small Tk window with the app logo, a scrolling log pane
+    mirroring stdout/stderr, and closing it exits the process - the server
+    thread is a daemon, so nothing keeps the process alive once Tk's
+    mainloop returns.
+
+    Writes arrive via a Queue rather than touching the Text widget directly:
+    Tk is only safe to touch from its own mainloop thread, but the redirected
+    stdout/stderr get written to from the waitress server thread too.
+    """
+
+    def __init__(self, title):
+        import tkinter as tk
+        from tkinter.scrolledtext import ScrolledText
+
+        self._tk = tk
+        self._queue = queue.Queue()
+
+        self.root = tk.Tk()
+        self.root.title(title)
+        self.root.geometry("640x360")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        icon_path = _window_icon_path()
+        if icon_path:
+            self._icon_image = tk.PhotoImage(file=icon_path)
+            self.root.iconphoto(True, self._icon_image)
+
+        header = tk.Frame(self.root)
+        header.pack(fill=tk.X, padx=8, pady=(8, 0))
+        if icon_path:
+            self._header_icon = self._icon_image.subsample(4, 4)
+            tk.Label(header, image=self._header_icon).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Label(header, text=title, font=("TkDefaultFont", 12, "bold")).pack(side=tk.LEFT)
+
+        self.text = ScrolledText(self.root, state="disabled", wrap="word")
+        self.text.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        self.root.after(50, self._drain_queue)
+
+    def _on_close(self):
+        self.root.destroy()
+
+    def _drain_queue(self):
+        try:
+            while True:
+                chunk = self._queue.get_nowait()
+                self.text.configure(state="normal")
+                self.text.insert("end", chunk)
+                self.text.see("end")
+                self.text.configure(state="disabled")
+        except queue.Empty:
+            pass
+        self.root.after(50, self._drain_queue)
+
+    def write(self, chunk):
+        if chunk:
+            self._queue.put(chunk)
+
+    def flush(self):
+        pass
+
+    def mainloop(self):
+        self.root.mainloop()
+
+
 def main():
-    _set_windows_console_branding()
+    log_window = _LogWindow("L4D2 Server Browser")
+    sys.stdout = log_window
+    sys.stderr = log_window
 
     from steam_browser.web import create_app
 
@@ -92,17 +147,17 @@ def main():
     server_thread.start()
 
     url = "http://{}:{}".format(host, port)
-    print("Serving on {}".format(url), flush=True)
-    if _wait_until_listening(host, port):
-        webbrowser.open(url)
-    else:
-        print("Server didn't come up in time - open {} manually.".format(url))
+    print("Serving on {}".format(url))
 
-    try:
-        while server_thread.is_alive():
-            server_thread.join(1)
-    except KeyboardInterrupt:
-        pass
+    def _open_browser_when_ready():
+        if _wait_until_listening(host, port):
+            webbrowser.open(url)
+        else:
+            print("Server didn't come up in time - open {} manually.".format(url))
+
+    threading.Thread(target=_open_browser_when_ready, daemon=True).start()
+
+    log_window.mainloop()
 
 
 if __name__ == "__main__":

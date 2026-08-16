@@ -22,19 +22,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_SIZES = [16, 32, 48, 64, 128, 256, 512]
 
 
-def _build_icon(build_dir):
+def _rasterize_icon(build_dir):
     """Rasterizes the app icon (steam_browser/static/icon.svg, also used
-    as the browser favicon - see index.html) into whatever format
-    PyInstaller's --icon wants on this OS, at build time, so the SVG stays
-    the single source instead of a checked-in binary icon per platform.
-
-    Windows -> .ico, macOS -> .icns. Skipped on Linux: PyInstaller doesn't
-    support embedding an icon into an ELF binary at all (onefile or not),
-    so passing --icon there just produces a warning.
+    as the browser favicon - see index.html) to PNG once at build time,
+    the shared source for both the OS-native --icon below and the PNG
+    bundled for launcher.py's own log window, so the SVG stays the single
+    source instead of a checked-in binary per platform/purpose.
     """
-    if sys.platform not in ("win32", "darwin"):
-        return None
-
     import resvg_py
     from PIL import Image
 
@@ -43,14 +37,38 @@ def _build_icon(build_dir):
     png_bytes = resvg_py.svg_to_bytes(svg_path=svg_path, width=1024, height=1024)
     with open(png_path, "wb") as f:
         f.write(png_bytes)
-    image = Image.open(png_path)
+    return Image.open(png_path)
 
+
+def _build_native_icon(build_dir, image):
+    """Converts the rasterized icon into whatever format PyInstaller's
+    --icon wants on this OS: Windows -> .ico, macOS -> .icns. Skipped on
+    Linux: PyInstaller doesn't support embedding an icon into an ELF binary
+    at all (onefile or not), so passing --icon there just produces a
+    warning. This only brands the .exe/.app file itself (and, on Windows,
+    whichever console host happens to be hosting it - which Windows
+    Terminal ignores), not the actual window launcher.py opens.
+    """
     if sys.platform == "win32":
         icon_path = os.path.join(build_dir, "icon.ico")
         image.save(icon_path, format="ICO", sizes=[(s, s) for s in ICON_SIZES])
-    else:
+        return icon_path
+    if sys.platform == "darwin":
         icon_path = os.path.join(build_dir, "icon.icns")
         image.save(icon_path, format="ICNS", sizes=[(s, s) for s in ICON_SIZES if s <= 512])
+        return icon_path
+    return None
+
+
+def _build_window_icon(build_dir, image):
+    """PNG bundled into the frozen app for launcher.py's _LogWindow to set
+    as its own window/taskbar icon at runtime, on every OS - unlike
+    _build_native_icon above, this is what actually shows up once the app
+    is running, since _LogWindow is a real window we own rather than a
+    console hosted by whatever terminal app the OS picks.
+    """
+    icon_path = os.path.join(build_dir, "window_icon.png")
+    image.resize((256, 256)).save(icon_path, format="PNG")
     return icon_path
 
 
@@ -65,18 +83,25 @@ def main():
     add_version = "{}{}{}".format(version_file, os.pathsep, ".")
 
     with tempfile.TemporaryDirectory() as build_dir:
-        icon_path = _build_icon(build_dir)
+        image = _rasterize_icon(build_dir)
+        native_icon_path = _build_native_icon(build_dir, image)
+        window_icon_path = _build_window_icon(build_dir, image)
+        # Bundled at the archive root as window_icon.png, matching where
+        # launcher.py's _window_icon_path() looks for it once frozen.
+        add_window_icon = "{}{}{}".format(window_icon_path, os.pathsep, ".")
 
         args = [
             os.path.join(HERE, "launcher.py"),
             "--name=l4d2-server-browser",
             "--onefile",
+            "--windowed",
             "--add-data={}".format(add_data),
             "--add-data={}".format(add_version),
+            "--add-data={}".format(add_window_icon),
             "--noconfirm",
         ]
-        if icon_path:
-            args.append("--icon={}".format(icon_path))
+        if native_icon_path:
+            args.append("--icon={}".format(native_icon_path))
 
         PyInstaller.__main__.run(args)
 
