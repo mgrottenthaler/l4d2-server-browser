@@ -73,6 +73,17 @@ any other desktop app follows. Neither branch is exercised by `python3
 webserver.py` or the test suite (`CONFIG_DIR` there is just the project
 root); both only trigger when actually frozen.
 
+Logging (`steam_browser/logging_setup.py`'s `configure_logging()`, called
+from `web.py` at import time) writes to `CONFIG_DIR/l4d2-server-browser.log`
+(rotated at 1MB, 3 backups) for the same reason `.env` lives there and not
+next to the executable — see above. It attaches to the *root* logger rather
+than a package-specific one so waitress's own logger (which otherwise has no
+handler and silently drops everything, including its "Serving on ..."
+startup line) gets captured too, plus a console `StreamHandler` for
+interactive use. `launcher.py` imports `web.py` (and so triggers this) only
+after redirecting `sys.stdout`/`sys.stderr` to its Tk `_LogWindow`, so log
+output lands in that window as well as the file.
+
 PyInstaller doesn't cross-compile, so producing all three (Linux/Windows/
 macOS) executables means running `build_executable.py` on each OS —
 `.github/workflows/build-executables.yml` does this via a runner matrix,

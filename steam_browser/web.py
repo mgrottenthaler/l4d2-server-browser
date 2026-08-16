@@ -7,6 +7,7 @@ own server browser).
 import argparse
 import inspect
 import ipaddress
+import logging
 import os
 import socket
 import sys
@@ -21,6 +22,7 @@ from flask_limiter.util import get_remote_address
 from steam_browser import a2s
 from steam_browser import geoip
 from steam_browser.config import DEFAULT_CONFIG, get_steam_api_key, set_steam_api_key
+from steam_browser.logging_setup import configure_logging
 from steam_browser import steam_api
 from steam_browser.browser import probe_server
 from steam_browser.version import get_version
@@ -59,6 +61,9 @@ def _static_dir():
 
 CONFIG_DIR = _config_dir()
 STATIC_DIR = _static_dir()
+
+configure_logging(CONFIG_DIR)
+logger = logging.getLogger(__name__)
 
 # Bounds request volume on the on-demand probe routes below: sized to absorb
 # one sidebar click (players + info + rules fire together, see app.js's row
@@ -117,6 +122,8 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         _state["servers"] = []
         _state["candidate_count"] = len(servers)
 
+    logger.info("refresh: probing %d candidate servers", len(servers))
+
     with ThreadPoolExecutor(max_workers=cfg["max_workers"]) as executor:
         futures = [executor.submit(probe_server, s, cfg["query_timeout_s"]) for s in servers]
         for future in as_completed(futures):
@@ -146,6 +153,8 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
 
     with _state_lock:
         _state["servers"] = enriched
+
+    logger.info("refresh: %d servers responded", len(enriched))
 
 
 def _resolve_probeable_host(host):
@@ -181,6 +190,7 @@ def _refresh(cfg, api_key, not_empty, not_full):
             _state["last_updated"] = time.time()
             _state["status"] = "idle"
     except Exception as e:
+        logger.exception("refresh failed")
         with _state_lock:
             _state["status"] = "error"
             _state["error"] = str(e)
@@ -480,6 +490,7 @@ def api_setup_key():
         return jsonify({"error": "key required"}), 400
     set_steam_api_key(CONFIG_DIR, key)
     app.config["STEAM_BROWSER_API_KEY"] = key
+    logger.info("Steam Web API key configured via setup banner")
     return jsonify({"ok": True})
 
 
@@ -535,11 +546,7 @@ def main():
     application = create_app()
     application.config["DEV_MODE"] = args.dev
 
-    # Flask's dev server announces its listen address itself; waitress only
-    # logs it to a logger nothing configures, so print it in both cases.
-    # flush: under a pipe/log redirect stdout is block-buffered, and serve()
-    # below never returns to flush it.
-    print("Serving on http://{}:{}".format(args.host, args.port), flush=True)
+    logger.info("Serving on http://%s:%s", args.host, args.port)
     if args.dev:
         application.run(host=args.host, port=args.port)
     else:

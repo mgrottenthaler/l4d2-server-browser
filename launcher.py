@@ -12,6 +12,7 @@ hosts console apps in its own window and ignores the launched exe's icon and
 window title entirely, which is why a real console here can't be branded
 from inside the app.
 """
+import logging
 import os
 import queue
 import socket
@@ -129,7 +130,13 @@ def main():
     sys.stdout = log_window
     sys.stderr = log_window
 
+    # Importing this configures logging (steam_browser.logging_setup, called
+    # from web.py at module load) to write to CONFIG_DIR *and* to
+    # sys.stderr - which by now points at log_window above, so log output
+    # ends up in both the persisted log file and this window.
     from steam_browser.web import create_app
+
+    logger = logging.getLogger(__name__)
 
     # No API-key preflight here: create_app() starts regardless, and the UI
     # itself shows a setup banner (POST /api/setup/key) when one isn't
@@ -147,13 +154,13 @@ def main():
     server_thread.start()
 
     url = "http://{}:{}".format(host, port)
-    print("Serving on {}".format(url))
+    logger.info("Serving on %s", url)
 
     def _open_browser_when_ready():
         if _wait_until_listening(host, port):
             webbrowser.open(url)
         else:
-            print("Server didn't come up in time - open {} manually.".format(url))
+            logger.warning("Server didn't come up in time - open %s manually.", url)
 
     threading.Thread(target=_open_browser_when_ready, daemon=True).start()
 
