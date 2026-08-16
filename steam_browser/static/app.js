@@ -754,12 +754,16 @@
     els.emptyState.hidden = rows.length !== 0;
     els.table.hidden = rows.length === 0;
     if (rows.length === 0) {
+      els.emptyState.classList.remove("empty-state-cta");
       if (state.activeTab === "favorites" && state.favorites.size === 0) {
         els.emptyState.textContent = "No favorites yet. Click the star next to a server to add it here.";
       } else if (state.activeTab === "favorites" && state.favoritesProbing) {
         els.emptyState.textContent = "Checking favorites…";
       } else if (state.activeTab === "internet" && state.status === "idle" && !state.lastUpdated) {
         els.emptyState.textContent = "Click refresh to load the server list.";
+        els.emptyState.classList.add("empty-state-cta");
+      } else if (state.activeTab === "internet" && state.status === "refreshing") {
+        els.emptyState.textContent = "Searching for servers…";
       } else {
         els.emptyState.textContent = "No servers match the current filters.";
       }

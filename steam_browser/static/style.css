@@ -556,6 +556,12 @@ tbody tr.offline .col-name {
   color: var(--text-dim);
 }
 
+.empty-state.empty-state-cta {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
 /* Slim status strip between table and filter panel */
 .statusbar {
   background: #0e161f;
