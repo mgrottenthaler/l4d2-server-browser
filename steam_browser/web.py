@@ -138,7 +138,14 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
                     f.cancel()
                 break
 
+    # Flip back to idle now, before the geoip pass below - that's a
+    # sequential batch of HTTP calls to ip-api.com (up to 5s each) that can
+    # take much longer than probing itself once thousands of servers have
+    # responded, and both Stop and a normal refresh's completion should
+    # reflect in the UI as soon as probing is actually done, not after.
     with _state_lock:
+        _state["last_updated"] = time.time()
+        _state["status"] = "idle"
         results = list(_state["servers"])
 
     countries = geoip.lookup_countries({r["host"] for r in results})
@@ -182,13 +189,12 @@ def _refresh(cfg, api_key, not_empty, not_full):
     """Background-thread body of a refresh. api_refresh has already flipped
     status to "refreshing" (synchronously, so its own response and any
     immediately-following poll observe it) and cleared the cancel event;
-    this just does the work and records the outcome.
+    this just does the work. _fetch_all itself flips status back to "idle"
+    once probing finishes (before its trailing geoip pass), so on success
+    there's nothing left to record here.
     """
     try:
         _fetch_all(cfg, api_key, not_empty, not_full, _cancel_event)
-        with _state_lock:
-            _state["last_updated"] = time.time()
-            _state["status"] = "idle"
     except Exception as e:
         logger.exception("refresh failed")
         with _state_lock:

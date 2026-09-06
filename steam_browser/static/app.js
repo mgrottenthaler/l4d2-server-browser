@@ -823,9 +823,17 @@
       ? "Last refreshed " + new Date(state.lastUpdated * 1000).toLocaleTimeString()
       : "";
 
-    var refreshing = state.status === "refreshing" || state.favoritesProbing;
-    els.refreshBtn.classList.toggle("spinning", refreshing);
-    els.refreshBtn.title = refreshing ? "Stop refreshing" : "Refresh server list";
+    // "spinning" (red, stop icon) only applies when clicking the button
+    // would actually stop something - favorites probing has no cancel, so
+    // that case gets a plain spin on the normal icon instead ("busy", not
+    // "click to stop") to avoid promising a stop the click won't deliver.
+    var stoppable = state.status === "refreshing";
+    var busy = state.favoritesProbing && !stoppable;
+    els.refreshBtn.classList.toggle("spinning", stoppable);
+    els.refreshBtn.classList.toggle("busy", busy);
+    els.refreshBtn.title = stoppable
+      ? "Stop refreshing"
+      : busy ? "Checking favorites…" : "Refresh server list";
     // Disabled (rather than left clickable) while a quick-refresh is in
     // flight - starting a full refresh at the same time would let it
     // finish repopulating state.servers before the quick-refresh's merge
