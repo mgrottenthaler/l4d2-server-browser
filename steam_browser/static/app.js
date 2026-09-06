@@ -851,7 +851,7 @@
     // Disabled (rather than left clickable) while a quick-refresh is in
     // flight - starting a full refresh at the same time would let it
     // finish repopulating state.servers before the quick-refresh's merge
-    // runs, which quickRefreshShown's status check now guards against, but
+    // runs, which quickRefreshAll's status check now guards against, but
     // there's no reason to let the user cause that in the first place.
     els.refreshBtn.disabled = state.quickRefreshing && state.status !== "refreshing";
 
@@ -918,14 +918,15 @@
     });
   }
 
-  function quickRefreshShown() {
-    // Re-probes exactly the servers currently visible under the active
-    // filters (including not_empty/not_full, which - unlike a full
-    // /api/refresh - are only applied client-side here) so a server whose
-    // player count crossed a filter threshold since the last refresh drops
-    // out or appears once render() re-applies those filters below.
+  function quickRefreshAll() {
+    // Re-probes every server from the last master-list refresh, not just
+    // the ones currently visible under the active display filters - a
+    // server hidden by e.g. "not full" needs fresh data too, since that's
+    // exactly what might make it match the filter again. render() below
+    // re-applies every filter (including not_empty/not_full) once the
+    // probe results land, so matches/drops are re-evaluated from scratch.
     if (state.quickRefreshing || state.status === "refreshing") return;
-    var targets = getFiltered()
+    var targets = state.servers
       .filter(function (s) { return s.online !== false; })
       .map(function (s) { return s.host + ":" + s.port; });
     if (targets.length === 0) return;
@@ -1231,7 +1232,7 @@
     }
   });
 
-  els.quickRefreshBtn.addEventListener("click", quickRefreshShown);
+  els.quickRefreshBtn.addEventListener("click", quickRefreshAll);
 
   [els.tabInternet, els.tabFavorites].forEach(function (tab) {
     tab.addEventListener("click", function () {
