@@ -233,6 +233,22 @@ A few non-obvious frontend behaviors worth knowing before touching them:
   (`.offline` in `style.css`) rather than disappearing; those rows are
   exempt from every other filter (name/map/ping/etc.) since there's no data
   to filter on, and are sorted to the bottom regardless of the active sort.
+- `filterServers(includeVolatileFilters)` (which `getFiltered()` calls with
+  `true`) splits the filter set into static and volatile groups. Static —
+  name, mode, ping, secure/insecure, official-only — target attributes that
+  rarely change mid-session (VAC status is fixed at server launch; mode/name
+  could in theory change via a vote plugin or rcon rename, but rarely enough
+  that it's not worth a probe on every server they exclude). Volatile —
+  players/max_players (`notEmpty`/`notFull`/`dispNotEmpty`/`dispNotFull`),
+  map/campaign/stage, and password (`noPassword`) — target attributes that
+  genuinely change often: someone joins/leaves, a campaign finishes, a map
+  vote passes, or an admin locks/unlocks the server (`sv_password` is a
+  routine live-rcon toggle, e.g. reserving slots for a private match).
+  `quickRefreshAll()` calls `filterServers(false)` to get the set worth
+  spending a probe on: rows already visible, plus rows hidden only by a
+  volatile filter. This is why quick refresh can surface a server that just
+  emptied out, unlocked, or rotated onto the right map, but never bothers
+  re-probing one excluded by ping or mode.
 
 ## Domain logic
 

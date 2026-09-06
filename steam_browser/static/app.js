@@ -344,14 +344,16 @@
   }
 
   // `includeVolatileFilters` splits the filter set in two:
-  //   - name/mode/ping/secure/password/official target attributes that are
-  //     effectively fixed for a server's lifetime, at least on the
-  //     timescale of a refresh cycle - a probe response isn't going to
-  //     change a server's mode or VAC status, so a server already excluded
-  //     by one of those stays excluded.
+  //   - name/mode/ping/secure/official target attributes that rarely change
+  //     mid-session. VAC status is fixed at server launch. Mode/name can in
+  //     theory change via a vote plugin or rcon rename without a restart,
+  //     but that's rare enough that spending a probe on every mode/name-
+  //     excluded server to catch it isn't worth it.
   //   - players/max_players (not_empty/not_full, disp-not-empty/disp-not-
-  //     full) and map/campaign/stage change all the time - someone joins or
-  //     leaves, or the server finishes a campaign/votes a new map - so a
+  //     full), map/campaign/stage, and password (noPassword) change often -
+  //     someone joins/leaves, the server finishes a campaign or votes a new
+  //     map, or an admin locks/unlocks it (sv_password is a routine
+  //     live-rcon toggle, e.g. reserving slots for a private match) - so a
   //     server excluded by one of these now can easily match a moment
   //     later.
   // getFiltered() (what render() shows) always applies both. quickRefreshAll
@@ -385,7 +387,6 @@
       if (maxPing !== null && s.latency_ms > maxPing) return false;
       if (secure === "secure" && !s.secure) return false;
       if (secure === "insecure" && s.secure) return false;
-      if (noPassword && s.password_protected) return false;
       if (officialOnly && s.name.toLowerCase().indexOf("valve") === -1) return false;
       if (!includeVolatileFilters) return true;
       if (mapQuery &&
@@ -393,6 +394,7 @@
           s.stage.toLowerCase().indexOf(mapQuery) === -1 &&
           s.campaign.toLowerCase().indexOf(mapQuery) === -1) return false;
       if (campaign && s.campaign !== campaign) return false;
+      if (noPassword && s.password_protected) return false;
       // Re-checked client-side even though Valve already applied these two
       // server-side: a row's player count can drift after the refresh via
       // patchPlayerCount, so a server that filled up (or emptied out) since
@@ -944,14 +946,14 @@
 
   function quickRefreshAll() {
     // Re-probes every server that would be shown if the volatile filters
-    // (player counts, map/campaign) were lifted - i.e. rows already
-    // visible, plus rows hidden only by a stale player count or map, since
+    // (player counts, map/campaign, password) were lifted - i.e. rows
+    // already visible, plus rows hidden only by a volatile filter, since
     // that's what a fresh probe can actually change. A server already
-    // excluded by ping/mode/name/secure/password/official-only stays
-    // excluded no matter how fresh its data is, so there's no point
-    // spending a probe on it. render() below re-applies every filter
-    // (including the volatile ones) once results land, so matches/drops are
-    // re-evaluated from scratch. See filterServers().
+    // excluded by ping/mode/name/secure/official-only stays excluded no
+    // matter how fresh its data is, so there's no point spending a probe on
+    // it. render() below re-applies every filter (including the volatile
+    // ones) once results land, so matches/drops are re-evaluated from
+    // scratch. See filterServers().
     if (state.quickRefreshing || state.status === "refreshing") return;
     var targets = filterServers(false)
       .filter(function (s) { return s.online !== false; })
