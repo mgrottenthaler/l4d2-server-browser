@@ -1206,7 +1206,14 @@
   // filter above is display-only, applied client-side in getFiltered().
   var SERVER_SIDE_FILTER_ELS = [els.notEmpty, els.notFull];
   SERVER_SIDE_FILTER_ELS.forEach(function (el) {
-    el.addEventListener("change", triggerRefresh);
+    el.addEventListener("change", function () {
+      // These checkboxes stay visible (and toggleable) on the Favorites tab
+      // too, but that tab never uses the Internet master list - probing
+      // thousands of candidate servers in the background there would just
+      // spin the refresh icon over a list the user isn't even looking at.
+      // The new value still takes effect next time an Internet refresh runs.
+      if (state.activeTab === "internet") triggerRefresh();
+    });
   });
 
   document.querySelectorAll(".info-icon").forEach(function (el) {

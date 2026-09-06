@@ -198,6 +198,38 @@ def test_api_refresh_stop_sets_cancel_event(client):
     assert web_module._cancel_event.is_set()
 
 
+def test_api_refresh_stop_does_not_wait_out_in_flight_probes(client, monkeypatch):
+    """Regression test: _fetch_all used to sit inside a `with
+    ThreadPoolExecutor(...)` block, so even after the probe loop noticed
+    _cancel_event and broke out, the `with` block's implicit
+    shutdown(wait=True) still blocked _refresh (and the status flip back to
+    idle) on every already-running probe finishing - up to query_timeout_s,
+    or double that across the A2S challenge handshake. Stop should feel
+    near-instant regardless of how slow in-flight probes are.
+    """
+    server_count = web_module.DEFAULT_CONFIG["max_workers"] + 5
+    monkeypatch.setattr(
+        web_module.steam_api, "fetch_servers",
+        lambda api_key, appid, gamedir, limit, not_empty=False, not_full=False: [
+            {"addr": "1.2.3.{}:27015".format(i), "dedicated": True, "gametype": "coop", "secure": True}
+            for i in range(server_count)
+        ],
+    )
+
+    def slow_probe(server, timeout):
+        time.sleep(2.0)
+        return _fake_server_entry()
+
+    monkeypatch.setattr(web_module, "probe_server", slow_probe)
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    client.post("/api/refresh")
+    time.sleep(0.2)  # let probes actually start before cancelling
+
+    client.post("/api/refresh/stop")
+    _wait_until_not_refreshing(timeout=1.0)  # well under the 2s probe sleep
+
+
 def test_api_refresh_requires_api_key(client):
     web_module.app.config["STEAM_BROWSER_API_KEY"] = None
 

@@ -13,7 +13,7 @@ import socket
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from flask_limiter import Limiter
@@ -124,19 +124,33 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
 
     logger.info("refresh: probing %d candidate servers", len(servers))
 
-    with ThreadPoolExecutor(max_workers=cfg["max_workers"]) as executor:
-        futures = [executor.submit(probe_server, s, cfg["query_timeout_s"]) for s in servers]
-        for future in as_completed(futures):
-            result = future.result()
-            if result is not None:
-                with _state_lock:
-                    _state["servers"].append(result)
+    executor = ThreadPoolExecutor(max_workers=cfg["max_workers"])
+    try:
+        pending = set(executor.submit(probe_server, s, cfg["query_timeout_s"]) for s in servers)
+        while pending:
+            # Poll on a short timeout rather than blocking on the next
+            # future to complete (as_completed's behavior): a probe that's
+            # mid-challenge-handshake can take up to 2x query_timeout_s, and
+            # with max_workers of them in flight at once, waiting for one to
+            # finish before even checking cancel_event could stall Stop for
+            # seconds. Checking every 0.2s instead means noticing a cancel
+            # is decoupled from how long the currently-running probes take.
+            done, pending = wait(pending, timeout=0.2, return_when=FIRST_COMPLETED)
+            for future in done:
+                result = future.result()
+                if result is not None:
+                    with _state_lock:
+                        _state["servers"].append(result)
             if cancel_event.is_set():
-                # Drop futures that haven't started yet; ones already running
-                # are still bounded by query_timeout_s so this returns quickly.
-                for f in futures:
-                    f.cancel()
                 break
+    finally:
+        # wait=False: don't block returning (and flipping status back to
+        # idle below) on probes still in flight - once cancelled, their
+        # results no longer matter, so there's nothing worth waiting for.
+        # cancel_futures drops anything not yet started; already-running
+        # probes keep going in their own threads until they time out, but
+        # nothing here waits on them any more.
+        executor.shutdown(wait=False, cancel_futures=True)
 
     # Flip back to idle now, before the geoip pass below - that's a
     # sequential batch of HTTP calls to ip-api.com (up to 5s each) that can
