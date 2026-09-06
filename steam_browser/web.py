@@ -375,9 +375,9 @@ def api_favorites_probe():
     a favorited server still shows - as online or offline - even if it
     wasn't in the last /api/refresh result (empty/full filters excluded it,
     it's a listen server, or a refresh just hasn't run yet this session).
-    Also used by the Internet tab's "refresh shown" button to re-probe just
-    the currently filtered/visible servers (fresh player counts etc.)
-    without re-querying the master list or probing new candidates.
+    Also used by the Internet tab's quick-refresh button to re-probe every
+    server from the last master-list refresh in batches (fresh player counts
+    etc.) without re-querying the master list or probing new candidates.
 
     Request JSON body:
         {"servers": ["host:port", ...]}   # max 200 entries

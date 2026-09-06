@@ -129,6 +129,8 @@
     favoriteServers: {}, // key ("host:port") -> direct-probe result, for favorites not in `servers`
     favoritesProbing: false,
     quickRefreshing: false,
+    quickRefreshDone: 0,
+    quickRefreshTotal: 0,
     selected: null, // { host, port }
     playerQuery: null, // { key, loading, players, error }
     ruleQuery: null, // { key, loading, rules, error }
@@ -816,7 +818,7 @@
     if (state.activeTab === "favorites" && state.favoritesProbing) {
       parts.push("Checking favorites…");
     } else if (state.quickRefreshing) {
-      parts.push("Refreshing shown servers…");
+      parts.push("Refreshing… " + state.quickRefreshDone + " of " + state.quickRefreshTotal + " checked");
     } else if (state.status === "refreshing") {
       parts.push(
         "Refreshing… " + state.servers.length +
@@ -937,16 +939,26 @@
     }
 
     state.quickRefreshing = true;
+    state.quickRefreshDone = 0;
+    state.quickRefreshTotal = targets.length;
     render();
 
     // Batches are sent one at a time rather than via Promise.all - staying
     // well under PROBE_RATE_LIMIT ("10/second") regardless of how many
     // batches a large server list produces, instead of firing them all in
     // the same tick and having the tail end silently 429 (swallowed by the
-    // catch below, so those servers would otherwise just stay stale).
-    var responses = [];
+    // catch below, so those servers would otherwise just stay stale). Each
+    // batch is merged and rendered as soon as it lands (rather than
+    // accumulating everything for one merge at the end) - with thousands of
+    // known servers this sweep can take a while, and waiting for every last
+    // batch before showing anything would make it look hung the whole time.
     var sendNext = function (i) {
       if (i >= batches.length) return Promise.resolve();
+      // A full refresh started while this sweep is in flight (e.g. the user
+      // clicked Refresh) is already repopulating state.servers from
+      // scratch, so merging stale probe data on top of it would clobber or
+      // drop servers the newer refresh just found - stop the sweep here.
+      if (state.status === "refreshing") return Promise.resolve();
       return fetch("/api/favorites/probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -955,41 +967,34 @@
         .then(function (resp) { return resp.json(); })
         .catch(function () { return { servers: [] }; })
         .then(function (data) {
-          responses.push(data);
+          if (state.status !== "refreshing") {
+            var fresh = {};
+            (data.servers || []).forEach(function (s) {
+              fresh[s.host + ":" + s.port] = s;
+            });
+            // Drop entries that stopped responding (matching what a full
+            // refresh would do - a non-responding server never gets
+            // appended), and patch the rest with the newly probed data.
+            state.servers = state.servers
+              .filter(function (s) {
+                var probed = fresh[s.host + ":" + s.port];
+                return !probed || probed.online !== false;
+              })
+              .map(function (s) {
+                var probed = fresh[s.host + ":" + s.port];
+                return probed && probed.online !== false ? probed : s;
+              });
+            state.quickRefreshDone += batches[i].length;
+            render();
+          }
           return sendNext(i + 1);
         });
     };
 
-    sendNext(0)
-      .then(function () {
-        // A full refresh started while these batches were in flight (e.g.
-        // the user clicked Refresh) is already repopulating state.servers
-        // from scratch, so merging this now-stale probe data on top of it
-        // would clobber or drop servers the newer refresh just found.
-        if (state.status === "refreshing") return;
-        var fresh = {};
-        responses.forEach(function (data) {
-          (data.servers || []).forEach(function (s) {
-            fresh[s.host + ":" + s.port] = s;
-          });
-        });
-        // Drop entries that stopped responding (matching what a full
-        // refresh would do - a non-responding server never gets appended),
-        // and patch the rest with the newly probed data in place.
-        state.servers = state.servers
-          .filter(function (s) {
-            var probed = fresh[s.host + ":" + s.port];
-            return !probed || probed.online !== false;
-          })
-          .map(function (s) {
-            var probed = fresh[s.host + ":" + s.port];
-            return probed && probed.online !== false ? probed : s;
-          });
-      })
-      .then(function () {
-        state.quickRefreshing = false;
-        render();
-      });
+    sendNext(0).then(function () {
+      state.quickRefreshing = false;
+      render();
+    });
   }
 
   function probeFavorites(forceAll) {
