@@ -340,6 +340,25 @@
   }
 
   function getFiltered() {
+    return filterServers(true);
+  }
+
+  // `includePlayerCountFilters` splits the filter set in two:
+  //   - Every other filter (name/map/mode/campaign/ping/secure/password/
+  //     official) targets attributes that are effectively fixed for a
+  //     server's lifetime, at least on the timescale of a refresh cycle -
+  //     a probe response isn't going to change a server's mode or map, so
+  //     a server already excluded by one of those stays excluded.
+  //   - notEmpty/notFull/dispNotEmpty/dispNotFull target player counts,
+  //     which do change from one probe to the next.
+  // getFiltered() (what render() shows) always applies both. quickRefreshAll
+  // passes false to get the set worth re-probing: everything that would be
+  // shown if the player-count filters were momentarily lifted, i.e. rows
+  // already visible plus rows hidden only by a player-count filter. This
+  // keeps a quick refresh from re-probing e.g. a high-ping or wrong-mode
+  // server that filtering back in a fresh player count could never surface
+  // anyway.
+  function filterServers(includePlayerCountFilters) {
     var nameQuery = els.name.value.trim().toLowerCase();
     var mapQuery = els.map.value.trim().toLowerCase();
     var mode = els.mode.value;
@@ -369,6 +388,9 @@
       if (maxPing !== null && s.latency_ms > maxPing) return false;
       if (secure === "secure" && !s.secure) return false;
       if (secure === "insecure" && s.secure) return false;
+      if (noPassword && s.password_protected) return false;
+      if (officialOnly && s.name.toLowerCase().indexOf("valve") === -1) return false;
+      if (!includePlayerCountFilters) return true;
       // Re-checked client-side even though Valve already applied these two
       // server-side: a row's player count can drift after the refresh via
       // patchPlayerCount, so a server that filled up (or emptied out) since
@@ -377,8 +399,6 @@
       if (notFull && s.players >= s.max_players) return false;
       if (dispNotEmpty && s.players === 0) return false;
       if (dispNotFull && s.players >= s.max_players) return false;
-      if (noPassword && s.password_protected) return false;
-      if (officialOnly && s.name.toLowerCase().indexOf("valve") === -1) return false;
       return true;
     });
   }
@@ -921,14 +941,17 @@
   }
 
   function quickRefreshAll() {
-    // Re-probes every server from the last master-list refresh, not just
-    // the ones currently visible under the active display filters - a
-    // server hidden by e.g. "not full" needs fresh data too, since that's
-    // exactly what might make it match the filter again. render() below
-    // re-applies every filter (including not_empty/not_full) once the
-    // probe results land, so matches/drops are re-evaluated from scratch.
+    // Re-probes every server that would be shown if the player-count
+    // filters (not_empty/not_full, dispNotEmpty/dispNotFull) were lifted -
+    // i.e. rows already visible, plus rows hidden only by a stale player
+    // count - since that's the only thing a fresh probe can change. A
+    // server already excluded by ping/mode/map/name/secure/password/
+    // official-only stays excluded no matter how fresh its data is, so
+    // there's no point spending a probe on it. render() below re-applies
+    // every filter (including the player-count ones) once results land, so
+    // matches/drops are re-evaluated from scratch. See filterServers().
     if (state.quickRefreshing || state.status === "refreshing") return;
-    var targets = state.servers
+    var targets = filterServers(false)
       .filter(function (s) { return s.online !== false; })
       .map(function (s) { return s.host + ":" + s.port; });
     if (targets.length === 0) return;
