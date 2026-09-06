@@ -200,16 +200,28 @@
         </select>
       </div>
 
-      <div class="field checkboxes">
-        <label><input type="checkbox" id="f-not-full"> Server not full</label>
-        <label><input type="checkbox" id="f-not-empty"> Has users playing</label>
-        <label><input type="checkbox" id="f-no-password"> Is not password protected</label>
-        <label>
-          <input type="checkbox" id="f-official"> Official servers only
-          <span class="info-icon" tabindex="0"
-                data-tooltip="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers."
-                aria-label="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers.">i</span>
-        </label>
+      <div class="checkbox-groups">
+        <div class="field checkbox-group">
+          <span class="checkbox-group-label">
+            Search filters
+            <span class="info-icon" tabindex="0"
+                  data-tooltip="Sent directly to Steam's server list query, so toggling either one fetches a fresh server list instead of just re-filtering what's already shown."
+                  aria-label="Sent directly to Steam's server list query, so toggling either one fetches a fresh server list instead of just re-filtering what's already shown.">i</span>
+          </span>
+          <label><input type="checkbox" id="f-not-full"> Server not full</label>
+          <label><input type="checkbox" id="f-not-empty"> Has users playing</label>
+        </div>
+
+        <div class="field checkbox-group">
+          <span class="checkbox-group-label">Display filters</span>
+          <label><input type="checkbox" id="f-no-password"> Is not password protected</label>
+          <label>
+            <input type="checkbox" id="f-official"> Official servers only
+            <span class="info-icon" tabindex="0"
+                  data-tooltip="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers."
+                  aria-label="Steam's server list has no official/community flag, so this matches server names containing &quot;Valve&quot; as a heuristic. It can miss or misidentify some servers.">i</span>
+          </label>
+        </div>
       </div>
     </div>
   </div>

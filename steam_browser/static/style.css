@@ -672,14 +672,29 @@ tbody tr.offline .col-name {
   font-size: 13px;
 }
 
-.field.checkboxes {
-  flex-direction: column;
-  gap: 6px;
-  align-items: flex-start;
+.checkbox-groups {
+  display: flex;
+  gap: 22px;
   margin-left: auto;
 }
 
-.field.checkboxes label {
+.checkbox-group {
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.checkbox-group-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--text-dim);
+}
+
+.checkbox-group label {
   display: flex;
   align-items: center;
   gap: 6px;

@@ -357,6 +357,10 @@
       if (maxPing !== null && s.latency_ms > maxPing) return false;
       if (secure === "secure" && !s.secure) return false;
       if (secure === "insecure" && s.secure) return false;
+      // Re-checked client-side even though Valve already applied these two
+      // server-side: a row's player count can drift after the refresh via
+      // patchPlayerCount, so a server that filled up (or emptied out) since
+      // the last fetch still gets hidden without waiting on a new refresh.
       if (notEmpty && s.players === 0) return false;
       if (notFull && s.players >= s.max_players) return false;
       if (noPassword && s.password_protected) return false;
@@ -1174,9 +1178,12 @@
   [els.mode, els.campaign, els.ping, els.secure, els.noPassword, els.official].forEach(function (el) {
     el.addEventListener("change", render);
   });
-  // These two are pushed to the Valve query itself (see triggerRefresh), so
-  // toggling them needs a fresh fetch+probe cycle, not just a re-render.
-  [els.notEmpty, els.notFull].forEach(function (el) {
+  // Server-side filters: the only two Valve's master list actually honors
+  // (see steam_api.build_filter's docstring), so toggling one needs a fresh
+  // fetch+probe cycle via triggerRefresh, not just a re-render. Every other
+  // filter above is display-only, applied client-side in getFiltered().
+  var SERVER_SIDE_FILTER_ELS = [els.notEmpty, els.notFull];
+  SERVER_SIDE_FILTER_ELS.forEach(function (el) {
     el.addEventListener("change", triggerRefresh);
   });
 
