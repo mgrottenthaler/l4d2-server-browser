@@ -17,6 +17,8 @@
     secure: "",
     notEmpty: false,
     notFull: false,
+    dispNotEmpty: false,
+    dispNotFull: false,
     noPassword: false,
     officialOnly: false,
     sortKey: "latency_ms",
@@ -87,6 +89,8 @@
       secure: els.secure.value,
       notEmpty: els.notEmpty.checked,
       notFull: els.notFull.checked,
+      dispNotEmpty: els.dispNotEmpty.checked,
+      dispNotFull: els.dispNotFull.checked,
       noPassword: els.noPassword.checked,
       officialOnly: els.official.checked,
       sortKey: state.sortKey,
@@ -139,6 +143,8 @@
     secure: document.getElementById("f-secure"),
     notEmpty: document.getElementById("f-not-empty"),
     notFull: document.getElementById("f-not-full"),
+    dispNotEmpty: document.getElementById("f-disp-not-empty"),
+    dispNotFull: document.getElementById("f-disp-not-full"),
     noPassword: document.getElementById("f-no-password"),
     official: document.getElementById("f-official"),
     refreshBtn: document.getElementById("refresh-btn"),
@@ -203,6 +209,8 @@
   els.secure.value = saved.secure;
   els.notEmpty.checked = saved.notEmpty;
   els.notFull.checked = saved.notFull;
+  els.dispNotEmpty.checked = saved.dispNotEmpty;
+  els.dispNotFull.checked = saved.dispNotFull;
   els.noPassword.checked = saved.noPassword;
   els.official.checked = saved.officialOnly;
   els.filterPanel.classList.toggle("collapsed", state.filtersCollapsed);
@@ -338,6 +346,8 @@
     var secure = els.secure.value;
     var notEmpty = els.notEmpty.checked;
     var notFull = els.notFull.checked;
+    var dispNotEmpty = els.dispNotEmpty.checked;
+    var dispNotFull = els.dispNotFull.checked;
     var noPassword = els.noPassword.checked;
     var officialOnly = els.official.checked;
     var favoritesOnly = state.activeTab === "favorites";
@@ -363,6 +373,8 @@
       // the last fetch still gets hidden without waiting on a new refresh.
       if (notEmpty && s.players === 0) return false;
       if (notFull && s.players >= s.max_players) return false;
+      if (dispNotEmpty && s.players === 0) return false;
+      if (dispNotFull && s.players >= s.max_players) return false;
       if (noPassword && s.password_protected) return false;
       if (officialOnly && s.name.toLowerCase().indexOf("valve") === -1) return false;
       return true;
@@ -679,6 +691,8 @@
     if (els.secure.value) parts.push(els.secure.value === "secure" ? "is secured" : "is not secured");
     if (els.notFull.checked) parts.push("is not full");
     if (els.notEmpty.checked) parts.push("is not empty");
+    if (els.dispNotFull.checked) parts.push("is not full");
+    if (els.dispNotEmpty.checked) parts.push("is not empty");
     if (els.noPassword.checked) parts.push("has no password");
     if (els.official.checked) parts.push("is official");
     els.filterSummary.textContent = parts.length ? parts.join("; ") : "no filters applied";
@@ -1183,7 +1197,7 @@
   // the stale saved value and the filter snaps right back.
   els.mode.addEventListener("change", function () { saved.mode = ""; });
   els.campaign.addEventListener("change", function () { saved.campaign = ""; });
-  [els.mode, els.campaign, els.ping, els.secure, els.noPassword, els.official].forEach(function (el) {
+  [els.mode, els.campaign, els.ping, els.secure, els.dispNotEmpty, els.dispNotFull, els.noPassword, els.official].forEach(function (el) {
     el.addEventListener("change", render);
   });
   // Server-side filters: the only two Valve's master list actually honors

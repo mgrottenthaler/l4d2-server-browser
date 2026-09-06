@@ -214,7 +214,14 @@
         </div>
 
         <div class="field checkbox-group">
-          <span class="checkbox-group-label">Display filters</span>
+          <span class="checkbox-group-label">
+            Display filters
+            <span class="info-icon" tabindex="0"
+                  data-tooltip="Applied instantly to the already-fetched server list, unlike the search filters above which re-query Steam."
+                  aria-label="Applied instantly to the already-fetched server list, unlike the search filters above which re-query Steam.">i</span>
+          </span>
+          <label><input type="checkbox" id="f-disp-not-full"> Server not full</label>
+          <label><input type="checkbox" id="f-disp-not-empty"> Has users playing</label>
           <label><input type="checkbox" id="f-no-password"> Is not password protected</label>
           <label>
             <input type="checkbox" id="f-official"> Official servers only
