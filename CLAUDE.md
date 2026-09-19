@@ -227,6 +227,18 @@ favorites persist to `localStorage` under three separate keys (see the
 render.
 
 A few non-obvious frontend behaviors worth knowing before touching them:
+- Every call to the backend goes through `apiFetch()`, which flips
+  `state.connectionLost` on a *rejected* fetch (no answer at all — the
+  process behind the page was killed, the machine resumed on another
+  network) and shows the `#connection-lost` banner. An HTTP error status is
+  a live backend and stays each caller's business. Without it the page just
+  freezes silently: the poll loop's promise rejects and never reschedules,
+  and every button quietly does nothing. While lost, a reconnect loop
+  retries `fetchServers()` with backoff (2s → 15s), and a `/api/version`
+  heartbeat every 15s (skipped while the tab is hidden or a refresh poll is
+  already running, plus one on `visibilitychange`) is what notices a backend
+  that died while the page sat idle — the refresh poll loop only runs during
+  a refresh, so nothing else would.
 - `els.notEmpty`/`els.notFull` are the only filters Valve's master list
   actually honors server-side (see `steam_api.build_filter`'s docstring
   notes — secure/password filters are silently ignored or broken there), so

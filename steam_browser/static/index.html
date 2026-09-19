@@ -46,6 +46,16 @@
     </button>
   </div>
 
+  <div id="connection-lost" class="connection-banner" hidden>
+    <span class="connection-banner-icon" aria-hidden="true">&#9888;</span>
+    <span class="connection-banner-text">
+      Lost connection to the server browser &mdash; it may have been closed or stopped.
+      The list below is the last data received.
+    </span>
+    <span id="connection-lost-status" class="connection-banner-status">Reconnecting&hellip;</span>
+    <button type="button" id="connection-retry" class="btn">Retry now</button>
+  </div>
+
   <div class="content">
     <div class="table-wrap">
       <table id="server-table">

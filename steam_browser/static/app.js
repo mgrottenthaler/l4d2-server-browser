@@ -7,6 +7,14 @@
   // Mirrors web.py's MAX_FAVORITES_PROBE_BATCH - split into batches of this
   // size rather than relying on the shown list staying under the cap.
   var QUICK_REFRESH_BATCH_SIZE = 200;
+  // Backend-liveness watchdog (see apiFetch/markDisconnected). Reconnect
+  // attempts start fast - a backend that was just restarted is usually back
+  // within a second or two - and back off to MAX so a page left open
+  // against a permanently dead backend isn't retrying every two seconds
+  // forever.
+  var RECONNECT_MIN_MS = 2000;
+  var RECONNECT_MAX_MS = 15000;
+  var HEARTBEAT_MS = 15000;
 
   var defaultFilters = {
     name: "",
@@ -117,6 +125,7 @@
     lastUpdated: null,
     candidateCount: 0,
     hasApiKey: true, // optimistic until the first GET /api/servers response says otherwise, so the modal doesn't flash on every load
+    connectionLost: false, // this page can't reach its own backend - see apiFetch()
 
     sortKey: saved.sortKey,
     sortDir: saved.sortDir,
@@ -160,6 +169,9 @@
     toggleFiltersBtn: document.getElementById("toggle-filters-btn"),
     filterSummary: document.getElementById("filter-summary"),
     appVersion: document.getElementById("app-version"),
+    connectionBanner: document.getElementById("connection-lost"),
+    connectionStatus: document.getElementById("connection-lost-status"),
+    connectionRetry: document.getElementById("connection-retry"),
     tabInternet: document.getElementById("tab-internet"),
     tabFavorites: document.getElementById("tab-favorites"),
     sidebar: document.getElementById("server-sidebar"),
@@ -233,6 +245,84 @@
   // value is re-applied inside populateModeOptions().
 
   var pollTimer = null;
+  var reconnectTimer = null;
+  var reconnectDelay = RECONNECT_MIN_MS;
+
+  // Every call to this app's own backend goes through apiFetch so a backend
+  // that went away is noticed wherever it happens, not just in the poll
+  // loop - the page stays open long after the process behind it can be
+  // killed (closed terminal, stopped executable, laptop resumed on another
+  // network), and without this it just silently stops updating: the poll
+  // loop's promise rejects and never reschedules, and every button quietly
+  // does nothing.
+  //
+  // Only a *rejected* fetch counts as lost: that means no answer came back
+  // at all. An HTTP error status is a live backend disagreeing with us and
+  // stays each caller's own business.
+  function apiFetch(url, opts) {
+    return fetch(url, opts).then(
+      function (resp) {
+        markConnected();
+        return resp;
+      },
+      function (err) {
+        markDisconnected();
+        throw err;
+      }
+    );
+  }
+
+  function markDisconnected() {
+    // Nothing is answering, so the refresh poll loop has nothing to poll -
+    // the reconnect loop below takes over until the backend is back.
+    clearTimeout(pollTimer);
+    if (state.connectionLost) return;
+    state.connectionLost = true;
+    reconnectDelay = RECONNECT_MIN_MS;
+    scheduleReconnect();
+    render();
+  }
+
+  function markConnected() {
+    if (!state.connectionLost) return;
+    state.connectionLost = false;
+    clearTimeout(reconnectTimer);
+    reconnectDelay = RECONNECT_MIN_MS;
+    render();
+  }
+
+  function scheduleReconnect() {
+    clearTimeout(reconnectTimer);
+    els.connectionStatus.textContent = "Reconnecting\u2026";
+    reconnectTimer = setTimeout(attemptReconnect, reconnectDelay);
+  }
+
+  function attemptReconnect() {
+    clearTimeout(reconnectTimer);
+    els.connectionRetry.disabled = true;
+    els.connectionStatus.textContent = "Reconnecting\u2026";
+    // fetchServers() both proves the backend is answering again and
+    // resyncs from it - it may have restarted with an empty list, or
+    // finished a refresh while this page was cut off. apiFetch clears the
+    // banner on the way through.
+    fetchServers()
+      .catch(function () {
+        reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS);
+        scheduleReconnect();
+      })
+      .then(function () {
+        els.connectionRetry.disabled = false;
+      });
+  }
+
+  function renderConnection() {
+    els.connectionBanner.hidden = !state.connectionLost;
+  }
+
+  els.connectionRetry.addEventListener("click", function () {
+    reconnectDelay = RECONNECT_MIN_MS;
+    attemptReconnect();
+  });
 
   function escapeHtml(s) {
     var div = document.createElement("div");
@@ -541,7 +631,7 @@
 
   function fetchServerInfo(s) {
     var host = s.host, port = s.port;
-    fetch("/api/servers/" + encodeURIComponent(host) + "/" + port + "/info")
+    apiFetch("/api/servers/" + encodeURIComponent(host) + "/" + port + "/info")
       .then(function (resp) {
         return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
       })
@@ -615,7 +705,7 @@
     var key = s.host + ":" + s.port;
     state.playerQuery = { key: key, loading: true, players: null, error: null };
     renderPlayers();
-    fetch("/api/servers/" + encodeURIComponent(s.host) + "/" + s.port + "/players")
+    apiFetch("/api/servers/" + encodeURIComponent(s.host) + "/" + s.port + "/players")
       .then(function (resp) {
         return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
       })
@@ -687,7 +777,7 @@
     var key = s.host + ":" + s.port;
     state.ruleQuery = { key: key, loading: true, rules: null, error: null };
     renderRules();
-    fetch("/api/servers/" + encodeURIComponent(s.host) + "/" + s.port + "/rules")
+    apiFetch("/api/servers/" + encodeURIComponent(s.host) + "/" + s.port + "/rules")
       .then(function (resp) {
         return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
       })
@@ -831,6 +921,7 @@
       }
     });
 
+    renderConnection();
     renderStatus(rows.length);
     renderFilterSummary();
     renderSidebar();
@@ -839,7 +930,11 @@
 
   function renderStatus(shownCount) {
     var parts = [];
-    if (state.activeTab === "favorites" && state.favoritesProbing) {
+    if (state.connectionLost) {
+      // The banner carries the explanation; this just stops the status bar
+      // from claiming a refresh is still making progress when nothing is.
+      parts.push("Not connected \u2014 showing the last data received.");
+    } else if (state.activeTab === "favorites" && state.favoritesProbing) {
       parts.push("Checking favorites…");
     } else if (state.quickRefreshing) {
       parts.push("Refreshing… " + state.quickRefreshDone + " of " + state.quickRefreshTotal + " checked");
@@ -867,7 +962,7 @@
     // would actually stop something - favorites probing has no cancel, so
     // that case gets a plain spin on the normal icon instead ("busy", not
     // "click to stop") to avoid promising a stop the click won't deliver.
-    var stoppable = state.status === "refreshing";
+    var stoppable = state.status === "refreshing" && !state.connectionLost;
     var busy = state.favoritesProbing && !stoppable;
     els.refreshBtn.classList.toggle("spinning", stoppable);
     els.refreshBtn.classList.toggle("busy", busy);
@@ -890,7 +985,7 @@
   }
 
   function fetchServers() {
-    return fetch("/api/servers")
+    return apiFetch("/api/servers")
       .then(function (resp) { return resp.json(); })
       .then(function (data) {
         state.servers = data.servers || [];
@@ -935,13 +1030,15 @@
     // or broken there - see steam_api.build_filter), so pushing just these
     // two down cuts probing work dramatically without changing behavior for
     // the rest, which stay client-side and instant.
-    fetch("/api/refresh", {
+    apiFetch("/api/refresh", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ not_empty: els.notEmpty.checked, not_full: els.notFull.checked }),
-    }).then(function () {
-      fetchServers();
-    });
+    })
+      .then(function () {
+        fetchServers();
+      })
+      .catch(function () { /* backend unreachable; apiFetch already flagged it */ });
   }
 
   function quickRefreshAll() {
@@ -986,7 +1083,7 @@
       // scratch, so merging stale probe data on top of it would clobber or
       // drop servers the newer refresh just found - stop the sweep here.
       if (state.status === "refreshing") return Promise.resolve();
-      return fetch("/api/favorites/probe", {
+      return apiFetch("/api/favorites/probe", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ servers: batches[i] }),
@@ -1041,7 +1138,7 @@
     }
     state.favoritesProbing = true;
     render();
-    fetch("/api/favorites/probe", {
+    apiFetch("/api/favorites/probe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ servers: targets }),
@@ -1065,7 +1162,7 @@
     // the poll loop (scheduleNextPoll) to notice on its next tick - that's
     // up to 1.5s of the button still showing "stop" after a click that did
     // in fact stop it, which reads as the button not working.
-    fetch("/api/refresh/stop", { method: "POST" })
+    apiFetch("/api/refresh/stop", { method: "POST" })
       .then(function (resp) { return resp.json(); })
       .then(function (data) {
         state.status = data.status;
@@ -1352,7 +1449,7 @@
       return;
     }
     els.apiKeySave.disabled = true;
-    fetch("/api/setup/key", {
+    apiFetch("/api/setup/key", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: key }),
@@ -1383,12 +1480,31 @@
     if (e.key === "Enter") saveApiKey();
   });
 
-  fetch("/api/version")
+  apiFetch("/api/version")
     .then(function (r) { return r.json(); })
     .then(function (data) { els.appVersion.textContent = "v" + data.version; })
     .catch(function () {});
 
-  fetchServers();
+  // Without a heartbeat, a backend that dies while the page sits idle goes
+  // unnoticed until the user clicks something - the poll loop above only
+  // runs during a refresh. /api/version is the cheapest route there is (a
+  // constant string, already fetched once at load), so it doubles as a
+  // liveness ping without adding an endpoint. Skipped while the tab is
+  // hidden (nobody is looking) and while a refresh poll or the reconnect
+  // loop is already talking to the backend.
+  function heartbeat() {
+    if (document.hidden || state.connectionLost || state.status === "refreshing") return;
+    apiFetch("/api/version").catch(function () {});
+  }
+  setInterval(heartbeat, HEARTBEAT_MS);
+  // A tab hidden for hours (or a machine resumed from sleep) is the most
+  // likely moment for the backend to have gone away, so check on the way
+  // back in rather than waiting out the interval.
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) heartbeat();
+  });
+
+  fetchServers().catch(function () { /* apiFetch flagged it; the banner is up */ });
   if (state.activeTab === "favorites") {
     probeFavorites(false);
   }
