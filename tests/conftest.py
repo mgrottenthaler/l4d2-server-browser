@@ -22,7 +22,7 @@ def reset_state():
         web_module._state["error"] = None
         web_module._state["last_updated"] = None
         web_module._state["candidate_count"] = 0
-    web_module._cancel_event.clear()
+    web_module._current_run = None
     web_module.app.config["DEV_MODE"] = False
     # The limiter's in-memory counters are shared across the whole pytest
     # run (module-level app), so leaving it on would make tests fail on

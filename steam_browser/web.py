@@ -97,7 +97,24 @@ _state = {
     "last_updated": None,
     "candidate_count": 0,
 }
-_cancel_event = threading.Event()
+# The cancel Event of the refresh _state currently reflects, or None if no
+# refresh has run yet. Per-run rather than one shared module-level Event
+# because Stop flips the UI back to idle immediately (see api_refresh_stop)
+# while the cancelled thread can still be blocked in its master-list HTTP
+# request: a Refresh clicked in that window starts a second thread, and the
+# two must not both be writing _state. Every state write from a refresh
+# thread is gated on _is_current_run, so the zombie's writes are dropped.
+_current_run = None
+
+
+def _is_current_run(cancel_event):
+    """Whether cancel_event belongs to the refresh _state reflects - i.e.
+    whether this thread is still allowed to write to it. Call under
+    _state_lock. A cancelled run stays "current" (Stop doesn't clear
+    _current_run) so the results it already collected, and its trailing
+    geoip pass, still land; only a *newer* refresh displaces it.
+    """
+    return _current_run is cancel_event
 
 
 def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
@@ -113,12 +130,23 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         api_key, cfg["appid"], cfg["gamedir"], query_limit,
         not_empty=not_empty, not_full=not_full,
     )
+    # Stop was pressed while the master-list request was in flight. That
+    # request is the one part of a refresh nothing can interrupt - it blocks
+    # for the full connect timeout when the network drops out mid-refresh
+    # (switching wifi, a VPN coming up), which is exactly when a user
+    # reaches for Stop. Bail before touching _state: api_refresh_stop has
+    # already flipped status back to idle, and the previous refresh's
+    # servers are still on screen - cancelling shouldn't wipe them.
+    if cancel_event.is_set():
+        return
     # Only dedicated servers are worth showing (listen-server hosts come and
     # go with their owner's game session); secure/insecure is left to the
     # UI's Anti-cheat filter rather than excluded before probing.
     servers = [s for s in servers if s.get("dedicated")]
 
     with _state_lock:
+        if not _is_current_run(cancel_event):
+            return
         _state["servers"] = []
         _state["candidate_count"] = len(servers)
 
@@ -140,6 +168,8 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
                 result = future.result()
                 if result is not None:
                     with _state_lock:
+                        if not _is_current_run(cancel_event):
+                            return
                         _state["servers"].append(result)
             if cancel_event.is_set():
                 break
@@ -158,6 +188,8 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
     # responded, and both Stop and a normal refresh's completion should
     # reflect in the UI as soon as probing is actually done, not after.
     with _state_lock:
+        if not _is_current_run(cancel_event):
+            return
         _state["last_updated"] = time.time()
         _state["status"] = "idle"
         results = list(_state["servers"])
@@ -173,6 +205,8 @@ def _fetch_all(cfg, api_key, not_empty, not_full, cancel_event):
         enriched.append(dict(r, country_code=code, country_name=name))
 
     with _state_lock:
+        if not _is_current_run(cancel_event):
+            return
         _state["servers"] = enriched
 
     logger.info("refresh: %d servers responded", len(enriched))
@@ -199,19 +233,28 @@ def _resolve_probeable_host(host):
     return str(addr) if addr.is_global else None
 
 
-def _refresh(cfg, api_key, not_empty, not_full):
+def _refresh(cfg, api_key, not_empty, not_full, cancel_event):
     """Background-thread body of a refresh. api_refresh has already flipped
     status to "refreshing" (synchronously, so its own response and any
-    immediately-following poll observe it) and cleared the cancel event;
-    this just does the work. _fetch_all itself flips status back to "idle"
-    once probing finishes (before its trailing geoip pass), so on success
-    there's nothing left to record here.
+    immediately-following poll observe it) and registered cancel_event as
+    the current run; this just does the work. _fetch_all itself flips status
+    back to "idle" once probing finishes (before its trailing geoip pass),
+    so on success there's nothing left to record here.
     """
     try:
-        _fetch_all(cfg, api_key, not_empty, not_full, _cancel_event)
+        _fetch_all(cfg, api_key, not_empty, not_full, cancel_event)
     except Exception as e:
         logger.exception("refresh failed")
         with _state_lock:
+            if not _is_current_run(cancel_event):
+                return
+            if cancel_event.is_set():
+                # Cancelled, so this failure is most likely the cancellation
+                # showing up as a timeout on a request nobody is waiting for
+                # any more. The user asked for it to stop and Stop already
+                # put status back to idle - don't now pop an error banner
+                # reporting what they themselves cancelled.
+                return
             _state["status"] = "error"
             _state["error"] = str(e)
 
@@ -467,24 +510,42 @@ def api_refresh():
         # first instructions could otherwise see "idle" and never poll.
         _state["status"] = "refreshing"
         _state["error"] = None
-    _cancel_event.clear()
-    threading.Thread(target=_refresh, args=(DEFAULT_CONFIG, api_key, not_empty, not_full), daemon=True).start()
+        global _current_run
+        cancel_event = threading.Event()
+        # Registering the new run here displaces any previous one, so a
+        # thread still winding down from a cancelled refresh (typically
+        # blocked in the master-list request) can no longer write _state.
+        _current_run = cancel_event
+    threading.Thread(
+        target=_refresh,
+        args=(DEFAULT_CONFIG, api_key, not_empty, not_full, cancel_event),
+        daemon=True,
+    ).start()
     return jsonify({"status": "refreshing"})
 
 
 @app.route("/api/refresh/stop", methods=["POST"])
 def api_refresh_stop():
     """Cancel an in-progress refresh. Servers already probed are kept in the
-    result set; probes that hadn't started yet are dropped. No-op if no
-    refresh is running.
+    result set; probes that hadn't started yet are dropped. Status is back
+    to "idle" by the time this returns. No-op if no refresh is running.
 
     200 response JSON:
-        {"status": "idle" | "refreshing"}
+        {"status": "idle"}
     """
-    # Leaves whatever servers were already probed in place; _fetch_all just
-    # stops appending more and flips status back to idle on its own.
-    _cancel_event.set()
     with _state_lock:
+        if _current_run is not None:
+            _current_run.set()
+        # Flip to idle here rather than leaving it to the refresh thread.
+        # The thread notices a cancel promptly once it's in the probe loop,
+        # but before that it's blocked in the master-list HTTP request and
+        # can't check anything for as long as that takes (the full connect
+        # timeout when the network has gone away) - Stop must not appear to
+        # do nothing for that long. _current_run deliberately still points
+        # at the cancelled run, so whatever it already probed, plus its
+        # trailing geoip pass, is still allowed to land.
+        if _state["status"] == "refreshing":
+            _state["status"] = "idle"
         return jsonify({"status": _state["status"]})
 
 

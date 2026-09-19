@@ -1060,10 +1060,21 @@
   }
 
   function stopRefresh() {
-    // The backend stops appending new results and flips status back to
-    // idle on its own; the existing poll loop (scheduleNextPoll) picks that
-    // up on its next tick, so whatever was already found stays on screen.
-    fetch("/api/refresh/stop", { method: "POST" });
+    // Whatever was already found stays on screen; the backend just stops
+    // appending to it. Apply the response's status rather than waiting for
+    // the poll loop (scheduleNextPoll) to notice on its next tick - that's
+    // up to 1.5s of the button still showing "stop" after a click that did
+    // in fact stop it, which reads as the button not working.
+    fetch("/api/refresh/stop", { method: "POST" })
+      .then(function (resp) { return resp.json(); })
+      .then(function (data) {
+        state.status = data.status;
+        render();
+        // One last pull for results that landed between the final poll and
+        // the stop; it also clears the poll timer once it sees idle.
+        return fetchServers();
+      })
+      .catch(function () { /* the poll loop still picks the status up */ });
   }
 
   document.querySelectorAll("#server-table thead th[data-key]").forEach(function (th) {

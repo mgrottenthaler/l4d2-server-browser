@@ -1,3 +1,4 @@
+import threading
 import time
 
 from steam_browser import a2s
@@ -18,6 +19,15 @@ def _wait_until_not_refreshing(timeout=2.0):
                 return
         time.sleep(0.01)
     raise AssertionError("refresh thread did not finish within {}s".format(timeout))
+
+
+def _block_forever():
+    """Stand in for a master-list request hung on a network that went away
+    mid-refresh. Bounded so a failing test can't wedge the whole run - no
+    test should ever actually wait it out.
+    """
+    time.sleep(5)
+    return []
 
 
 def _fake_server_entry():
@@ -191,11 +201,106 @@ def test_api_refresh_is_a_noop_while_already_refreshing(client):
     assert resp.get_json()["status"] == "refreshing"
 
 
-def test_api_refresh_stop_sets_cancel_event(client):
-    assert not web_module._cancel_event.is_set()
+def test_api_refresh_stop_cancels_the_current_run_and_returns_idle(client, monkeypatch):
+    monkeypatch.setattr(
+        web_module.steam_api, "fetch_servers",
+        lambda *a, **kw: _block_forever(),
+    )
+
+    client.post("/api/refresh")
     resp = client.post("/api/refresh/stop")
+
     assert resp.status_code == 200
-    assert web_module._cancel_event.is_set()
+    # Idle already in the response, not eventually: the refresh thread is
+    # stuck in the master-list call and can't flip it back itself.
+    assert resp.get_json()["status"] == "idle"
+    assert web_module._current_run.is_set()
+
+
+def test_api_refresh_stop_is_immediate_while_stuck_on_the_master_list(client, monkeypatch):
+    """A refresh blocked in steam_api.fetch_servers (the network changed
+    under it, so the connect times out slowly) used to ignore Stop
+    entirely: nothing checked the cancel event until the probe loop, which
+    is after that call returns. Stop has to work during that window too -
+    it's the window a user is most likely to press it in.
+    """
+    monkeypatch.setattr(
+        web_module.steam_api, "fetch_servers",
+        lambda *a, **kw: _block_forever(),
+    )
+
+    client.post("/api/refresh")
+    client.post("/api/refresh/stop")
+
+    body = client.get("/api/servers").get_json()
+    assert body["status"] == "idle"
+
+    # ...and a fresh refresh can start right away rather than being
+    # swallowed by the "already refreshing" guard.
+    monkeypatch.setattr(
+        web_module.steam_api, "fetch_servers",
+        lambda *a, **kw: [{"addr": "1.2.3.4:27015", "dedicated": True, "gametype": "coop", "secure": True}],
+    )
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: _fake_server_entry())
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    assert client.post("/api/refresh").get_json()["status"] == "refreshing"
+    _wait_until_not_refreshing()
+    assert len(client.get("/api/servers").get_json()["servers"]) == 1
+
+
+def test_stale_refresh_thread_cannot_write_state_after_being_displaced(client, monkeypatch):
+    """The thread of a cancelled refresh keeps running until its master-list
+    call returns. If the user started another refresh in the meantime, that
+    zombie must not wipe/append to the new run's results.
+    """
+    released = threading.Event()
+
+    def blocked_fetch(*a, **kw):
+        released.wait(5)
+        return [{"addr": "9.9.9.9:27015", "dedicated": True, "gametype": "coop", "secure": True}]
+
+    monkeypatch.setattr(web_module.steam_api, "fetch_servers", blocked_fetch)
+    monkeypatch.setattr(web_module, "probe_server", lambda server, timeout: _fake_server_entry())
+    monkeypatch.setattr(web_module.geoip, "lookup_countries", lambda ips: {})
+
+    client.post("/api/refresh")   # blocks in fetch_servers
+    client.post("/api/refresh/stop")
+
+    with web_module._state_lock:  # stand in for a completed second refresh
+        web_module._current_run = threading.Event()
+        web_module._state["servers"] = [_fake_server_entry()]
+        web_module._state["candidate_count"] = 1
+
+    released.set()
+    time.sleep(0.3)  # let the zombie run to completion
+
+    body = client.get("/api/servers").get_json()
+    assert body["candidate_count"] == 1
+    assert len(body["servers"]) == 1
+
+
+def test_api_refresh_stop_does_not_report_an_error_for_the_cancelled_request(client, monkeypatch):
+    """The master-list request usually fails *because* of whatever made the
+    user hit Stop (network gone). Surfacing that as an error banner after
+    they cancelled is noise, not information.
+    """
+    release = threading.Event()
+
+    def fail_late(*a, **kw):
+        release.wait(5)
+        raise web_module.steam_api.SteamApiError("connection timed out")
+
+    monkeypatch.setattr(web_module.steam_api, "fetch_servers", fail_late)
+
+    client.post("/api/refresh")
+    client.post("/api/refresh/stop")
+    release.set()
+    time.sleep(0.3)
+
+    body = client.get("/api/servers").get_json()
+    assert body["status"] == "idle"
+    assert body["error"] is None
 
 
 def test_api_refresh_stop_does_not_wait_out_in_flight_probes(client, monkeypatch):

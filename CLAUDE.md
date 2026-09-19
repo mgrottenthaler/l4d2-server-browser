@@ -148,11 +148,26 @@ request-handling threads.
   immediately without a restart. `/api/refresh` itself 400s with a plain
   error if no key is configured yet, rather than calling `steam_api` with
   `None` and surfacing whatever Steam's API does with that.
-- `POST /api/refresh/stop` sets a module-level `threading.Event`
-  (`_cancel_event`) that `_fetch_all`'s probe loop checks after each
-  completed future; on cancel it drops not-yet-started futures and returns
-  early, keeping whatever was already probed. This is the only
-  cancellation mechanism in the codebase — nothing else uses
+- `POST /api/refresh/stop` sets the in-flight refresh's `threading.Event`
+  (`_current_run`, created per refresh by `api_refresh`) **and flips status
+  back to `idle` in the route itself**. It can't leave that flip to the
+  refresh thread: the thread notices a cancel promptly once it's in
+  `_fetch_all`'s probe loop (checked after each completed future; it then
+  drops not-yet-started futures and returns early, keeping whatever was
+  already probed), but *before* that it's blocked in
+  `steam_api.fetch_servers`' HTTP call and can't check anything until that
+  returns — the full connect timeout when the network changed out from
+  under it, which is exactly when a user reaches for Stop. Flipping status
+  in the route means a Refresh can start while the cancelled thread is
+  still winding down, so the cancel event doubles as a generation token:
+  `_is_current_run()` gates *every* `_state` write from a refresh thread,
+  and `api_refresh` displacing `_current_run` is what makes the zombie's
+  writes no-ops. Stop deliberately does **not** clear `_current_run`, so a
+  cancelled run's already-probed results and its trailing geoip pass still
+  land. `_refresh` also swallows the exception from a cancelled run (a
+  request abandoned mid-flight usually surfaces as a timeout) rather than
+  showing an error banner for what the user themselves cancelled. This is
+  the only cancellation mechanism in the codebase — nothing else uses
   `AbortController`/cancel tokens (per-row sidebar queries below use a
   simpler "ignore stale response" pattern instead of a true abort).
 - `GET /api/servers/<host>/<port>/players` and `.../rules` are synchronous,
