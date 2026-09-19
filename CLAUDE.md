@@ -129,6 +129,13 @@ request-handling threads.
   polling mid-refresh sees partial results. Rate-limited
   (`REFRESH_RATE_LIMIT`, `"3/second;30/minute"`) purely as anti-abuse — the
   status guard already dedupes overlapping refreshes.
+  `steam_api.fetch_servers` raises only `SteamApiError`, never a raw
+  `requests` exception (and `raise ... from None`, so no chained original):
+  requests puts the whole request URL — `key` query parameter included — in
+  the message of every connection/timeout error, and `_refresh` copies that
+  message straight into `_state["error"]`, which the UI renders in its
+  status bar and `logger.exception` writes to the log file. `_redact()`
+  strips the key from it first.
 - `GET /api/servers` just returns a snapshot of `_state` (sorted by latency),
   plus a `has_api_key` boolean read live off `app.config` (not part of
   `_state`) so the frontend knows whether to show the setup banner. The

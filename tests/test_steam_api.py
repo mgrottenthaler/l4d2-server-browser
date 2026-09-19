@@ -1,3 +1,6 @@
+import pytest
+import requests
+
 from steam_browser import steam_api
 
 
@@ -55,6 +58,46 @@ def test_fetch_servers_returns_server_list(monkeypatch):
     assert captured["url"] == steam_api.GET_SERVER_LIST_URL
     assert captured["params"]["key"] == "api-key"
     assert captured["params"]["limit"] == 100
+
+
+def test_fetch_servers_redacts_the_api_key_from_request_failures(monkeypatch):
+    """requests puts the whole request URL - `key` query parameter included -
+    in the message of a connect timeout, and web.py shows that message in the
+    UI's error banner and writes it to the log file verbatim.
+    """
+    secret = "0123456789ABCDEF0123456789ABCDEF"
+
+    def fake_get(url, params, timeout):
+        raise requests.ConnectTimeout(
+            "HTTPSConnectionPool(host='api.steampowered.com', port=443): Max retries "
+            "exceeded with url: /IGameServersService/GetServerList/v1/?key={}"
+            "&filter=x (Caused by ConnectTimeoutError(...))".format(secret)
+        )
+
+    monkeypatch.setattr(steam_api.requests, "get", fake_get)
+
+    with pytest.raises(steam_api.SteamApiError) as excinfo:
+        steam_api.fetch_servers(secret, 550, "left4dead2", 100)
+
+    assert secret not in str(excinfo.value)
+    assert "<redacted>" in str(excinfo.value)
+    assert "api.steampowered.com" in str(excinfo.value)  # still diagnosable
+    # No chained original either - logger.exception would print its message
+    # (key and all) right below this one.
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__context__ is None or excinfo.value.__suppress_context__
+
+
+def test_fetch_servers_redacts_a_key_query_param_it_doesnt_know_the_value_of(monkeypatch):
+    def fake_get(url, params, timeout):
+        raise requests.ConnectionError("failed: https://api.steampowered.com/x?key=abc123&limit=1")
+
+    monkeypatch.setattr(steam_api.requests, "get", fake_get)
+
+    with pytest.raises(steam_api.SteamApiError) as excinfo:
+        steam_api.fetch_servers("", 550, "left4dead2", 100)
+
+    assert "abc123" not in str(excinfo.value)
 
 
 def test_fetch_servers_defaults_to_empty_list_when_response_missing_servers(monkeypatch):
